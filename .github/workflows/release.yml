@@ -1,7 +1,9 @@
 name: Release
 
-# 构建已回退到私有开发仓库执行；本工作流暂作备用，不自动响应 tag。
+# tag push 自动触发构建发布；也可手动 dispatch。
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
