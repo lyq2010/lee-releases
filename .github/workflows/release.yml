@@ -1,11 +1,7 @@
 name: Release
 
-# 公开发版仓库负责构建与发布，避免私有开发仓库消耗私有 Actions 额度。
-# 推同名 tag 到本仓库或手动 dispatch 后，会拉取私有开发仓库对应 tag 进行构建。
+# 构建已回退到私有开发仓库执行；本工作流暂作备用，不自动响应 tag。
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
