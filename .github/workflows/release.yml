@@ -213,7 +213,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          PLT_TELEMETRY_URL: https://plt-telemetry.leenbsl.workers.dev/t
+          PLT_TELEMETRY_URL: ${{ secrets.PLT_TELEMETRY_URL }}
       - name: 组装便携版并整理发布产物（ASCII 名）
         shell: pwsh
         run: |
@@ -322,7 +322,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          PLT_TELEMETRY_URL: https://plt-telemetry.leenbsl.workers.dev/t
+          PLT_TELEMETRY_URL: ${{ secrets.PLT_TELEMETRY_URL }}
       - name: 整理发布产物（ASCII 名）
         working-directory: source
         run: |
