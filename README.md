@@ -20,7 +20,7 @@
 
 ## 安装与更新
 
-- Windows 提供签名安装包与便携版，macOS 提供 dmg，见 [Releases](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases)。
+- Windows 提供签名安装包与便携版，macOS 提供 dmg，见 [Releases](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest)。
 - 应用内自动更新：启动时检查新版本，装机版走安装包更新，便携版原地替换 zip。
 
 ## 关于
