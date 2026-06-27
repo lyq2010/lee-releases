@@ -8,6 +8,14 @@ on:
         description: "要构建并发布的开发仓库 tag（如 v2.1.4）"
         required: true
         type: string
+      mode:
+        description: "Release workflow mode"
+        required: false
+        default: build
+        type: choice
+        options:
+          - build
+          - mirror-only
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -20,6 +28,7 @@ permissions:
 
 jobs:
   validate-tag:
+    if: ${{ inputs.mode != 'mirror-only' }}
     runs-on: ubuntu-latest
     steps:
       - name: 生成私有源码只读 token
@@ -43,6 +52,7 @@ jobs:
           gh api "repos/${SOURCE_REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null
 
   drift-check:
+    if: ${{ inputs.mode != 'mirror-only' }}
     needs: validate-tag
     runs-on: ubuntu-latest
     steps:
@@ -76,6 +86,7 @@ jobs:
         run: python source/tools/engine_sync.py --check --skill-root _skill
 
   tests:
+    if: ${{ inputs.mode != 'mirror-only' }}
     needs: validate-tag
     runs-on: ubuntu-latest
     steps:
@@ -120,6 +131,7 @@ jobs:
         run: python -m unittest discover -s python/tests
 
   build-windows:
+    if: ${{ inputs.mode != 'mirror-only' }}
     needs: [drift-check, tests]
     runs-on: windows-latest
     steps:
@@ -190,6 +202,11 @@ jobs:
       - name: 安装前端依赖
         working-directory: source
         run: npm ci
+      - name: 注入 COS 更新通道
+        working-directory: source
+        env:
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: python tools/inject_update_channel.py
       - name: Tauri 构建（含签名 NSIS 安装包 + 更新签名）
         working-directory: source
         run: npm run tauri:build -- --bundles nsis
@@ -213,7 +230,7 @@ jobs:
           Copy-Item "$root/packaging/local-code-signing.cer" "$pdir/local-code-signing.cer" -Force
           Copy-Item "$root/packaging/信任证书（双击运行一次）.bat" $pdir -Force
           Copy-Item "$root/packaging/portable-README.txt" "$pdir/README.txt" -Force
-          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq '5E7D39A03527718E8B599FE2716D97C833462465'
+          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq '92F183EB22EB3F0115CEC468C9AAE3930615E7A6'
           Set-AuthenticodeSignature -FilePath "$pdir/建筑板打包单工具箱.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
           Set-AuthenticodeSignature -FilePath "$pdir/packing-worker.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
           Set-Content -Path "$pdir/portable.flag" -Value $ver -Encoding ascii
@@ -242,6 +259,7 @@ jobs:
           path: source/dist-release/*
 
   build-macos:
+    if: ${{ inputs.mode != 'mirror-only' }}
     needs: [drift-check, tests]
     runs-on: macos-14
     steps:
@@ -293,6 +311,11 @@ jobs:
       - name: 安装前端依赖
         working-directory: source
         run: npm ci
+      - name: 注入 COS 更新通道
+        working-directory: source
+        env:
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: python3 tools/inject_update_channel.py
       - name: Tauri 构建（arm64 dmg + 自动更新包，未做 Apple 公证）
         working-directory: source
         run: npm run tauri:build -- --bundles app,dmg
@@ -318,6 +341,7 @@ jobs:
           path: source/dist-release/*
 
   release:
+    if: ${{ inputs.mode != 'mirror-only' }}
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
@@ -440,60 +464,105 @@ jobs:
           done < <(find artifacts -type f -print)
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
-  r2-mirror:
+  cos-mirror:
     needs: release
+    if: ${{ always() && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-      - name: 上传产物到 R2（并生成指向 R2 的 latest.json）
+      - name: 下载 GitHub Release 产物
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          base="https://plt-releases.leenbsl.workers.dev"
-          newver="${RELEASE_TAG#v}"
-          oldver="$(curl -fsSL "$base/latest.json" 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
-          echo "R2 旧版本: ${oldver:-(无)}，本次发布: $newver"
-          for f in artifacts/windows/* artifacts/macos/*; do
-            [ -f "$f" ] || continue
-            bn=$(basename "$f")
-            [ "$bn" = latest.json ] && continue
-            npx wrangler r2 object put "packing-list-releases/$bn" --file "$f" --remote
-            echo "  -> $bn"
-          done
-          curl -fsSL -o gh-latest.json \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/latest.json"
-          python3 - "$base" <<'PY'
-          import json, sys
+          tag="${RELEASE_TAG}"
+          rm -rf cos-assets
+          mkdir -p cos-assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir cos-assets
+          test -s cos-assets/latest.json
+          ls -la cos-assets
+      - name: 上传产物到腾讯 COS（并生成指向 COS 的 latest.json）
+        env:
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user cos-python-sdk-v5
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
           from pathlib import Path
           from urllib.parse import urlparse
-          base = sys.argv[1]
-          data = json.loads(Path("gh-latest.json").read_text(encoding="utf-8"))
-          def swap(url):
-              return f"{base}/{Path(urlparse(url).path).name}"
-          for plat in data.get("platforms", {}).values():
-              if plat.get("url"):
-                  plat["url"] = swap(plat["url"])
+          from qcloud_cos import CosConfig, CosS3Client
+
+          tag = os.environ["RELEASE_TAG"]
+          newver = tag[1:] if tag.startswith("v") else tag
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
+          region = os.environ["TENCENT_COS_REGION"].strip()
+          secret_id = os.environ["TENCENT_COS_SECRET_ID"].strip()
+          secret_key = os.environ["TENCENT_COS_SECRET_KEY"].strip()
+          if not all([base, bucket, region, secret_id, secret_key]):
+              sys.exit("COS secrets are incomplete")
+          parsed = urlparse(base)
+          if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+              sys.exit(f"COS_PUBLIC_BASE_URL is invalid: {base}")
+          prefix = parsed.path.strip("/")
+          def key(name: str) -> str:
+              return f"{prefix}/{name}" if prefix else name
+          def public_url(name: str) -> str:
+              return f"{base}/{name}"
+
+          client = CosS3Client(CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key, Scheme="https"))
+          oldver = ""
+          try:
+              with urllib.request.urlopen(f"{base}/latest.json", timeout=20) as resp:
+                  oldver = json.loads(resp.read().decode("utf-8")).get("version", "")
+          except Exception as exc:
+              print(f"No previous COS latest.json detected: {exc}")
+          print(f"COS old version: {oldver or '(none)'}; new version: {newver}")
+
+          assets = [p for p in sorted(Path("cos-assets").iterdir()) if p.is_file()]
+          for path in assets:
+              if path.name == "latest.json":
+                  continue
+              client.upload_file(Bucket=bucket, LocalFilePath=str(path), Key=key(path.name), EnableMD5=False)
+              print(f"  uploaded {key(path.name)}")
+
+          data = json.loads(Path("cos-assets/latest.json").read_text(encoding="utf-8"))
+          for item in data.get("platforms", {}).values():
+              if item.get("url"):
+                  item["url"] = public_url(Path(urlparse(item["url"]).path).name)
           if data.get("portable", {}).get("url"):
-              data["portable"]["url"] = swap(data["portable"]["url"])
-          Path("r2-latest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+              data["portable"]["url"] = public_url(Path(urlparse(data["portable"]["url"]).path).name)
+          body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+          client.put_object(Bucket=bucket, Body=body, Key=key("latest.json"), ContentType="application/json; charset=utf-8")
           print(json.dumps(data, ensure_ascii=False, indent=2))
+
+          keep_keys = {key(path.name) for path in assets if path.name != "latest.json"}
+          release_prefix = key("packing-list-toolkit_")
+          marker = ""
+          while True:
+              list_kwargs = {"Bucket": bucket, "Prefix": release_prefix, "MaxKeys": 1000}
+              if marker:
+                  list_kwargs["Marker"] = marker
+              listed = client.list_objects(**list_kwargs)
+              for obj in listed.get("Contents", []) or []:
+                  obj_key = obj.get("Key", "")
+                  if obj_key and obj_key not in keep_keys:
+                      client.delete_object(Bucket=bucket, Key=obj_key)
+                      print(f"  deleted old {obj_key}")
+              if listed.get("IsTruncated") in ("true", True):
+                  marker = listed.get("NextMarker") or ""
+                  if marker:
+                      continue
+              break
+          print("COS mirror complete")
           PY
-          npx wrangler r2 object put "packing-list-releases/latest.json" \
-            --file r2-latest.json \
-            --content-type "application/json; charset=utf-8" \
-            --remote
-          if [ -n "$oldver" ] && [ "$oldver" != "$newver" ]; then
-            for suf in _x64-setup.exe _x64_portable.zip _arm64.dmg _aarch64.app.tar.gz _aarch64.app.tar.gz.sig; do
-              key="packing-list-toolkit_${oldver}${suf}"
-              npx wrangler r2 object delete "packing-list-releases/$key" --remote 2>/dev/null || true
-            done
-          fi
-          echo "R2 镜像完成"
 
   gitee-mirror:
+    if: ${{ inputs.mode != 'mirror-only' }}
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 180
