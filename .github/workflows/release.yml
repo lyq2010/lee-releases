@@ -1,9 +1,7 @@
 name: Release
 
-# 由私有开发仓库 tag push → repository_dispatch 自动触发，也支持手动 dispatch。
+# 构建已回退到私有开发仓库执行；本工作流暂作备用，不自动响应 tag。
 on:
-  repository_dispatch:
-    types: [release-build]
   workflow_dispatch:
     inputs:
       tag:
@@ -20,7 +18,7 @@ on:
           - mirror-only
 
 env:
-  RELEASE_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.tag || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   SOURCE_REPO: lyq2010/packing-list-desktop
   SKILLS_REPO: lyq2010/jx-skills
   GITEE_REPO: lyq2010/building-panel-dept-toolkit-releases
