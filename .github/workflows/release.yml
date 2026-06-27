@@ -499,6 +499,8 @@ jobs:
           tag = os.environ["RELEASE_TAG"]
           newver = tag[1:] if tag.startswith("v") else tag
           base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
           bucket = os.environ["TENCENT_COS_BUCKET"].strip()
           region = os.environ["TENCENT_COS_REGION"].strip()
           secret_id = os.environ["TENCENT_COS_SECRET_ID"].strip()
