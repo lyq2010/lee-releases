@@ -37,7 +37,7 @@ jobs:
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.SOURCE_APP_ID }}
+          client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
           repositories: packing-list-desktop,jx-skills
@@ -62,7 +62,7 @@ jobs:
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.SOURCE_APP_ID }}
+          client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
           repositories: packing-list-desktop,jx-skills
@@ -96,7 +96,7 @@ jobs:
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.SOURCE_APP_ID }}
+          client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
           repositories: packing-list-desktop,jx-skills
@@ -141,7 +141,7 @@ jobs:
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.SOURCE_APP_ID }}
+          client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
           repositories: packing-list-desktop
@@ -269,7 +269,7 @@ jobs:
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.SOURCE_APP_ID }}
+          client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
           repositories: packing-list-desktop
@@ -351,7 +351,7 @@ jobs:
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.SOURCE_APP_ID }}
+          client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
           repositories: packing-list-desktop
