@@ -216,7 +216,7 @@ jobs:
       - name: 安装前端依赖
         working-directory: source
         run: npm ci
-      - name: 注入 COS 更新通道
+      - name: 注入更新通道（COS + R2 + GitHub）
         working-directory: source
         env:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
@@ -311,7 +311,7 @@ jobs:
       - name: 安装前端依赖
         working-directory: source
         run: npm ci
-      - name: 注入 COS 更新通道
+      - name: 注入更新通道（COS + R2 + GitHub）
         working-directory: source
         env:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
@@ -631,19 +631,67 @@ jobs:
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest.json" --file r2-assets/latest.json --content-type "application/json; charset=utf-8" --remote
           echo "  uploaded ${R2_BUCKET}/latest.json"
 
-          current="${RELEASE_TAG#v}"
-          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | while IFS= read -r tag; do
-            ver="${tag#v}"
-            [ "$ver" = "$current" ] && continue
-            for name in \
-              "packing-list-toolkit_${ver}_x64-setup.exe" \
-              "packing-list-toolkit_${ver}_arm64.dmg" \
-              "packing-list-toolkit_${ver}_aarch64.app.tar.gz" \
-              "packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
-            do
-              npm exec --yes --package wrangler@4 -- wrangler r2 object delete "${R2_BUCKET}/${name}" --remote || true
-            done
-          done
+          python3 - "$account_id" <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          account_id = sys.argv[1]
+          bucket = os.environ["R2_BUCKET"].strip()
+          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          current = os.environ["RELEASE_TAG"].lstrip("v")
+          prefix = "packing-list-toolkit_"
+          keep_prefix = f"{prefix}{current}_"
+
+          def api_url(path, params=None):
+              url = f"https://api.cloudflare.com/client/v4{path}"
+              if params:
+                  url = f"{url}?{urllib.parse.urlencode(params)}"
+              return url
+
+          def request(method, path, params=None):
+              req = urllib.request.Request(
+                  api_url(path, params),
+                  method=method,
+                  headers={"Authorization": f"Bearer {token}"},
+              )
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  data = json.loads(resp.read().decode("utf-8"))
+              if not data.get("success"):
+                  raise SystemExit(json.dumps(data, ensure_ascii=False))
+              return data
+
+          bucket_path = (
+              f"/accounts/{urllib.parse.quote(account_id, safe='')}"
+              f"/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
+          )
+          cursor = ""
+          stale = []
+          while True:
+              params = {"prefix": prefix, "per_page": "1000"}
+              if cursor:
+                  params["cursor"] = cursor
+              data = request("GET", bucket_path, params)
+              for obj in data.get("result") or []:
+                  key = obj.get("key", "")
+                  if key.startswith(prefix) and not key.startswith(keep_prefix):
+                      stale.append(key)
+              info = data.get("result_info") or {}
+              if not info.get("is_truncated"):
+                  break
+              cursor = info.get("cursor") or ""
+              if not cursor:
+                  raise SystemExit("R2 object listing was truncated without a cursor")
+
+          if not stale:
+              print("No old R2 release objects to delete")
+          for key in stale:
+              object_path = f"{bucket_path}/{urllib.parse.quote(key, safe='/')}"
+              request("DELETE", object_path)
+              print(f"  deleted old {key}")
+          PY
           curl -fsS -H "Cache-Control: no-cache" "${base}/latest.json?verify=${GITHUB_RUN_ID}" |
             python3 -c 'import json, os, sys; data=json.load(sys.stdin); expected=os.environ["RELEASE_TAG"].lstrip("v"); actual=data.get("version"); assert actual == expected, f"R2 public latest.json version mismatch: {actual} != {expected}"'
           echo "R2 mirror complete"
