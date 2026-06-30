@@ -23,7 +23,6 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   SOURCE_REPO: lyq2010/packing-list-desktop
   SKILLS_REPO: lyq2010/jx-skills
-  GITEE_REPO: lyq2010/building-panel-dept-toolkit-releases
 
 permissions:
   contents: write
@@ -573,114 +572,102 @@ jobs:
           print("COS mirror complete")
           PY
 
-  gitee-mirror:
+  r2-mirror:
     needs: release
     if: ${{ always() && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     steps:
-      - name: 下载已发布的 GitHub Release 产物与说明
+      - name: 下载 GitHub Release 产物
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${RELEASE_TAG}"
-          mkdir -p gitee-assets
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir gitee-assets
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body -q .body > notes.md || echo "$tag" > notes.md
-          ls -la gitee-assets
-      - name: 同步到 Gitee
+          rm -rf r2-assets
+          mkdir -p r2-assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir r2-assets
+          test -s r2-assets/latest.json
+          ls -la r2-assets
+      - name: 上传产物到 Cloudflare R2（并生成指向 R2 的 latest.json）
         env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: packing-list-releases
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
+          python3 -m pip install --user boto3
           python3 - <<'PY'
-          import base64, json, os, sys, urllib.error, urllib.parse, urllib.request, uuid
+          import json, os, sys
           from pathlib import Path
-          token = os.environ["GITEE_TOKEN"]
-          owner, repo = os.environ["GITEE_REPO"].split("/", 1)
-          tag = os.environ["RELEASE_TAG"]; ver = tag[1:] if tag.startswith("v") else tag
-          API = "https://gitee.com/api/v5"
-          API_TIMEOUT, UPLOAD_TIMEOUT = 60, 1800
-          def api(method, path, *, form=None, query=None):
-              q = dict(query or {}); q["access_token"] = token
-              url = f"{API}{path}?{urllib.parse.urlencode(q)}"
-              data = urllib.parse.urlencode(form).encode() if form is not None else None
-              req = urllib.request.Request(url, data=data, method=method)
-              if data is not None:
-                  req.add_header("Content-Type", "application/x-www-form-urlencoded")
-              try:
-                  with urllib.request.urlopen(req, timeout=API_TIMEOUT) as r:
-                      body = r.read().decode("utf-8")
-                      return r.status, (json.loads(body) if body.strip() else None)
-              except urllib.error.HTTPError as e:
-                  return e.code, e.read().decode("utf-8", "replace")
-          def dl_url(obj):
-              for k in ("browser_download_url", "download_url", "url"):
-                  if isinstance(obj, dict) and obj.get(k):
-                      return obj[k]
-              sys.exit(f"无法从 Gitee 响应取下载链接: {str(obj)[:300]}")
-          def upload_asset(release_id, filepath):
-              boundary = uuid.uuid4().hex
-              fname = os.path.basename(filepath)
-              pre = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
-                     f'filename="{fname}"\r\nContent-Type: application/octet-stream\r\n\r\n')
-              body = pre.encode() + Path(filepath).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
-              url = f"{API}/repos/{owner}/{repo}/releases/{release_id}/attach_files?" + urllib.parse.urlencode({"access_token": token})
-              last = None
-              for attempt in range(1, 4):
-                  try:
-                      req = urllib.request.Request(url, data=body, method="POST")
-                      req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-                      with urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT) as r:
-                          return json.loads(r.read())
-                  except Exception as e:
-                      last = e
-                      print(f"  第 {attempt} 次上传失败: {type(e).__name__}: {e}", flush=True)
-              raise last
-          def get_release():
-              st, body = api("GET", f"/repos/{owner}/{repo}/releases/tags/{tag}")
-              return body if (st == 200 and isinstance(body, dict) and body.get("id")) else None
-          rel = get_release()
-          if rel is None:
-              notes = (Path("notes.md").read_text(encoding="utf-8").strip() if Path("notes.md").exists() else "") or tag
-              status, body = api("POST", f"/repos/{owner}/{repo}/releases", form={
-                  "tag_name": tag, "name": tag, "body": notes,
-                  "prerelease": "false", "target_commitish": "master"})
-              print(f"创建 Gitee Release: {status} {str(body)[:200]}")
-              rel = body if (status in (200, 201) and isinstance(body, dict) and body.get("id")) else get_release()
-              if rel is None:
-                  sys.exit(f"建/取 Gitee Release 失败: {status} {body}")
-          release_id = rel["id"]
-          gitee_url = {a["name"]: dl_url(a) for a in (rel.get("assets") or []) if a.get("name")}
-          data = json.loads(Path("gitee-assets/latest.json").read_text(encoding="utf-8"))
-          assets = [p for p in sorted(Path("gitee-assets").glob("*")) if p.is_file() and p.name != "latest.json"]
-          for p in assets:
-              if p.name in gitee_url:
-                  print(f"已存在，跳过: {p.name}", flush=True); continue
-              print(f"上传中: {p.name} ({p.stat().st_size // 1024} KB) ...", flush=True)
-              gitee_url[p.name] = dl_url(upload_asset(release_id, str(p)))
-              print(f"  -> {gitee_url[p.name]}", flush=True)
-          def swap(u):
-              name = u.rsplit("/", 1)[-1]
-              if name not in gitee_url:
-                  sys.exit(f"Gitee 缺少资产对应 URL: {name}")
-              return gitee_url[name]
+          from urllib.parse import urlparse
+
+          import boto3
+
+          account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"].strip()
+          bucket = os.environ["R2_BUCKET"].strip()
+          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
+          access_key = os.environ["R2_ACCESS_KEY_ID"].strip()
+          secret_key = os.environ["R2_SECRET_ACCESS_KEY"].strip()
+          if not all([account_id, bucket, base, access_key, secret_key]):
+              sys.exit("R2 secrets are incomplete")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+              sys.exit(f"R2_PUBLIC_BASE_URL is invalid: {base}")
+
+          client = boto3.client(
+              "s3",
+              endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
+              aws_access_key_id=access_key,
+              aws_secret_access_key=secret_key,
+              region_name="auto",
+          )
+
+          data = json.loads(Path("r2-assets/latest.json").read_text(encoding="utf-8"))
+          def public_url(url):
+              return f"{base}/{Path(urlparse(url).path).name}"
           for plat in data.get("platforms", {}).values():
-              plat["url"] = swap(plat["url"])
+              if plat.get("url"):
+                  plat["url"] = public_url(plat["url"])
           if data.get("portable", {}).get("url"):
-              data["portable"]["url"] = swap(data["portable"]["url"])
-          manifest = json.dumps(data, ensure_ascii=False, indent=2)
-          path = "updater/latest.json"
-          form = {"content": base64.b64encode(manifest.encode("utf-8")).decode(),
-                  "message": f"更新自动更新清单到 {ver}", "branch": "master"}
-          status, cur = api("GET", f"/repos/{owner}/{repo}/contents/{path}", query={"ref": "master"})
-          if status == 200 and isinstance(cur, dict) and cur.get("sha"):
-              form["sha"] = cur["sha"]
-              status, res = api("PUT", f"/repos/{owner}/{repo}/contents/{path}", form=form)
-          else:
-              status, res = api("POST", f"/repos/{owner}/{repo}/contents/{path}", form=form)
-          if status not in (200, 201):
-              sys.exit(f"写入 Gitee latest.json 失败: {status} {res}")
-          print(f"Gitee 镜像完成：Release {tag}，镜像 {len(assets)} 个产物 + updater/latest.json")
+              data["portable"]["url"] = public_url(data["portable"]["url"])
+          Path("r2-assets/latest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(json.dumps(data, ensure_ascii=False, indent=2))
+
+          assets = [p for p in sorted(Path("r2-assets").iterdir()) if p.is_file()]
+          for path in assets:
+              if path.name == "latest.json":
+                  continue
+              client.upload_file(
+                  Filename=str(path),
+                  Bucket=bucket,
+                  Key=path.name,
+                  ExtraArgs={
+                      "ContentType": "application/octet-stream",
+                      "CacheControl": "public, max-age=31536000, immutable",
+                  },
+              )
+              print(f"  uploaded {bucket}/{path.name}")
+
+          client.put_object(
+              Bucket=bucket,
+              Key="latest.json",
+              Body=Path("r2-assets/latest.json").read_bytes(),
+              ContentType="application/json; charset=utf-8",
+              CacheControl="public, max-age=60",
+          )
+          print(f"  uploaded {bucket}/latest.json")
+
+          keep_keys = {path.name for path in assets if path.name != "latest.json"}
+          paginator = client.get_paginator("list_objects_v2")
+          for page in paginator.paginate(Bucket=bucket, Prefix="packing-list-toolkit_"):
+              for obj in page.get("Contents", []) or []:
+                  key = obj.get("Key", "")
+                  if key and key not in keep_keys:
+                      client.delete_object(Bucket=bucket, Key=key)
+                      print(f"  deleted old {key}")
+          print("R2 mirror complete")
           PY

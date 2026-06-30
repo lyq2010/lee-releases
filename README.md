@@ -15,8 +15,6 @@
 | Windows | `..._x64-setup.exe`（安装版，推荐）或 `..._x64_portable.zip`（便携版，解压即用） |
 | macOS（Apple 芯片） | `..._arm64.dmg` |
 
-> 连不上 GitHub 的同事，可从 [Gitee 下载页](https://gitee.com/lyq2010/building-panel-dept-toolkit-releases/releases) 下载同样的安装包。
-
 Windows 便携版首次使用：双击目录里的 **「信任证书（双击运行一次）.bat」** 让系统信任自签名证书（只需一次）。
 
 ## 快速上手
@@ -57,7 +55,7 @@ Windows 便携版首次使用：双击目录里的 **「信任证书（双击运
 
 ## 自动更新
 
-启动时自动检查新版本（COS / Gitee / GitHub 三通道兜底，哪个通用哪个）。安装版走安装包更新，便携版原地替换；也可在「关于」里手动检查。
+启动时自动检查新版本（COS / R2 / GitHub 三通道兜底，哪个通用哪个）。安装版走安装包更新，便携版原地替换；也可在「关于」里手动检查。
 
 ## 隐私
 
