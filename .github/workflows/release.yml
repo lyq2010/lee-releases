@@ -216,6 +216,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           PLT_TELEMETRY_URL: ${{ secrets.PLT_TELEMETRY_URL }}
+          VITE_LAUNCHER_PRODUCTION_URL: ${{ secrets.LAUNCHER_PRODUCTION_URL }}
+          VITE_LAUNCHER_OA_URL: ${{ secrets.LAUNCHER_OA_URL }}
+          VITE_LAUNCHER_ACADEMY_URL: ${{ secrets.LAUNCHER_ACADEMY_URL }}
+          VITE_LAUNCHER_EMAIL_URL: ${{ secrets.LAUNCHER_EMAIL_URL }}
       - name: 组装便携版并整理发布产物（ASCII 名）
         shell: pwsh
         run: |
@@ -325,6 +329,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           PLT_TELEMETRY_URL: ${{ secrets.PLT_TELEMETRY_URL }}
+          VITE_LAUNCHER_PRODUCTION_URL: ${{ secrets.LAUNCHER_PRODUCTION_URL }}
+          VITE_LAUNCHER_OA_URL: ${{ secrets.LAUNCHER_OA_URL }}
+          VITE_LAUNCHER_ACADEMY_URL: ${{ secrets.LAUNCHER_ACADEMY_URL }}
+          VITE_LAUNCHER_EMAIL_URL: ${{ secrets.LAUNCHER_EMAIL_URL }}
       - name: 整理发布产物（ASCII 名）
         working-directory: source
         run: |
