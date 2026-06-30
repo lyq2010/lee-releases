@@ -649,10 +649,10 @@ jobs:
 
           find r2-assets -maxdepth 1 -type f ! -name latest.json -print0 | while IFS= read -r -d '' path; do
             name="$(basename "$path")"
-            npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${name}" --file "$path"
+            npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${name}" --file "$path" --remote
             echo "  uploaded ${R2_BUCKET}/${name}"
           done
-          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest.json" --file r2-assets/latest.json --content-type "application/json; charset=utf-8"
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest.json" --file r2-assets/latest.json --content-type "application/json; charset=utf-8" --remote
           echo "  uploaded ${R2_BUCKET}/latest.json"
 
           current="${RELEASE_TAG#v}"
@@ -666,7 +666,9 @@ jobs:
               "packing-list-toolkit_${ver}_aarch64.app.tar.gz" \
               "packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
             do
-              npm exec --yes --package wrangler@4 -- wrangler r2 object delete "${R2_BUCKET}/${name}" || true
+              npm exec --yes --package wrangler@4 -- wrangler r2 object delete "${R2_BUCKET}/${name}" --remote || true
             done
           done
+          curl -fsS -H "Cache-Control: no-cache" "${base}/latest.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json, os, sys; data=json.load(sys.stdin); expected=os.environ["RELEASE_TAG"].lstrip("v"); actual=data.get("version"); assert actual == expected, f"R2 public latest.json version mismatch: {actual} != {expected}"'
           echo "R2 mirror complete"
