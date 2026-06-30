@@ -18,6 +18,15 @@ on:
         options:
           - build
           - mirror-only
+      mirror:
+        description: "mirror-only 时要重镜像的通道"
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - cos
+          - r2
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -475,7 +484,7 @@ jobs:
 
   cos-mirror:
     needs: release
-    if: ${{ always() && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
+    if: ${{ always() && (inputs.mode != 'mirror-only' || inputs.mirror != 'r2') && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - name: 下载 GitHub Release 产物
@@ -574,7 +583,7 @@ jobs:
 
   r2-mirror:
     needs: release
-    if: ${{ always() && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
+    if: ${{ always() && (inputs.mode != 'mirror-only' || inputs.mirror != 'cos') && (inputs.mode == 'mirror-only' || needs.release.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - name: 下载 GitHub Release 产物
@@ -590,41 +599,41 @@ jobs:
           ls -la r2-assets
       - name: 上传产物到 Cloudflare R2（并生成指向 R2 的 latest.json）
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           R2_BUCKET: packing-list-releases
-          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -m pip install --user boto3
-          python3 - <<'PY'
+          base="${R2_PUBLIC_BASE_URL%/}"
+          case "$base" in
+            http://*|https://*) ;;
+            *) base="https://$base" ;;
+          esac
+
+          account_id="$(
+            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.cloudflare.com/client/v4/accounts |
+            python3 -c 'import json, sys; data=json.load(sys.stdin); accounts=data.get("result") or []; assert data.get("success") and accounts, "Cannot resolve Cloudflare account id from CF_API_TOKEN"; print(accounts[0]["id"])'
+          )"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+
+          npm exec --yes --package wrangler@4 -- wrangler --version
+
+          python3 - "$base" <<'PY'
           import json, os, sys
           from pathlib import Path
           from urllib.parse import urlparse
 
-          import boto3
-
-          account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"].strip()
           bucket = os.environ["R2_BUCKET"].strip()
-          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
-          access_key = os.environ["R2_ACCESS_KEY_ID"].strip()
-          secret_key = os.environ["R2_SECRET_ACCESS_KEY"].strip()
-          if not all([account_id, bucket, base, access_key, secret_key]):
+          base = sys.argv[1].rstrip("/")
+          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          if not all([bucket, base, token]):
               sys.exit("R2 secrets are incomplete")
-          if "://" not in base:
-              base = f"https://{base}"
           parsed = urlparse(base)
           if parsed.scheme not in {"http", "https"} or not parsed.netloc:
               sys.exit(f"R2_PUBLIC_BASE_URL is invalid: {base}")
-
-          client = boto3.client(
-              "s3",
-              endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
-              aws_access_key_id=access_key,
-              aws_secret_access_key=secret_key,
-              region_name="auto",
-          )
 
           data = json.loads(Path("r2-assets/latest.json").read_text(encoding="utf-8"))
           def public_url(url):
@@ -636,38 +645,28 @@ jobs:
               data["portable"]["url"] = public_url(data["portable"]["url"])
           Path("r2-assets/latest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
           print(json.dumps(data, ensure_ascii=False, indent=2))
-
-          assets = [p for p in sorted(Path("r2-assets").iterdir()) if p.is_file()]
-          for path in assets:
-              if path.name == "latest.json":
-                  continue
-              client.upload_file(
-                  Filename=str(path),
-                  Bucket=bucket,
-                  Key=path.name,
-                  ExtraArgs={
-                      "ContentType": "application/octet-stream",
-                      "CacheControl": "public, max-age=31536000, immutable",
-                  },
-              )
-              print(f"  uploaded {bucket}/{path.name}")
-
-          client.put_object(
-              Bucket=bucket,
-              Key="latest.json",
-              Body=Path("r2-assets/latest.json").read_bytes(),
-              ContentType="application/json; charset=utf-8",
-              CacheControl="public, max-age=60",
-          )
-          print(f"  uploaded {bucket}/latest.json")
-
-          keep_keys = {path.name for path in assets if path.name != "latest.json"}
-          paginator = client.get_paginator("list_objects_v2")
-          for page in paginator.paginate(Bucket=bucket, Prefix="packing-list-toolkit_"):
-              for obj in page.get("Contents", []) or []:
-                  key = obj.get("Key", "")
-                  if key and key not in keep_keys:
-                      client.delete_object(Bucket=bucket, Key=key)
-                      print(f"  deleted old {key}")
-          print("R2 mirror complete")
           PY
+
+          find r2-assets -maxdepth 1 -type f ! -name latest.json -print0 | while IFS= read -r -d '' path; do
+            name="$(basename "$path")"
+            npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${name}" --file "$path"
+            echo "  uploaded ${R2_BUCKET}/${name}"
+          done
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest.json" --file r2-assets/latest.json --content-type "application/json; charset=utf-8"
+          echo "  uploaded ${R2_BUCKET}/latest.json"
+
+          current="${RELEASE_TAG#v}"
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | while IFS= read -r tag; do
+            ver="${tag#v}"
+            [ "$ver" = "$current" ] && continue
+            for name in \
+              "packing-list-toolkit_${ver}_x64-setup.exe" \
+              "packing-list-toolkit_${ver}_x64_portable.zip" \
+              "packing-list-toolkit_${ver}_arm64.dmg" \
+              "packing-list-toolkit_${ver}_aarch64.app.tar.gz" \
+              "packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
+            do
+              npm exec --yes --package wrangler@4 -- wrangler r2 object delete "${R2_BUCKET}/${name}" || true
+            done
+          done
+          echo "R2 mirror complete"
