@@ -228,7 +228,7 @@ jobs:
           VITE_LAUNCHER_OA_URL: ${{ secrets.LAUNCHER_OA_URL }}
           VITE_LAUNCHER_ACADEMY_URL: ${{ secrets.LAUNCHER_ACADEMY_URL }}
           VITE_LAUNCHER_EMAIL_URL: ${{ secrets.LAUNCHER_EMAIL_URL }}
-      - name: 组装便携版并整理发布产物（ASCII 名）
+      - name: 整理 Windows 发布产物（ASCII 名）
         shell: pwsh
         run: |
           $ver  = "${{ env.RELEASE_TAG }}" -replace '^v',''
@@ -236,20 +236,6 @@ jobs:
           $rel  = "$root/src-tauri/target/release"
           $stage = "$root/dist-release"
           New-Item -ItemType Directory -Force $stage | Out-Null
-          $pname = "packing-list-toolkit_${ver}_x64_portable"
-          $pdir  = "$root/portable/$pname"
-          New-Item -ItemType Directory -Force $pdir | Out-Null
-          Copy-Item "$rel/packing-list-desktop.exe" "$pdir/建筑板打包单工具箱.exe" -Force
-          Copy-Item "$rel/packing-worker.exe" "$pdir/packing-worker.exe" -Force
-          Copy-Item "$root/packaging/local-code-signing.cer" "$pdir/local-code-signing.cer" -Force
-          Copy-Item "$root/packaging/信任证书（双击运行一次）.bat" $pdir -Force
-          Copy-Item "$root/packaging/portable-README.txt" "$pdir/README.txt" -Force
-          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object Thumbprint -eq '92F183EB22EB3F0115CEC468C9AAE3930615E7A6'
-          Set-AuthenticodeSignature -FilePath "$pdir/建筑板打包单工具箱.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
-          Set-AuthenticodeSignature -FilePath "$pdir/packing-worker.exe" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 | Out-Null
-          Set-Content -Path "$pdir/portable.flag" -Value $ver -Encoding ascii
-          Compress-Archive -Path "$pdir/*" -DestinationPath "$stage/$pname.zip" -Force
-          $psha = (Get-FileHash "$stage/$pname.zip" -Algorithm SHA256).Hash.ToLower()
           $setup = Get-ChildItem "$rel/bundle/nsis/*-setup.exe" | Select-Object -First 1
           Copy-Item $setup.FullName "$stage/packing-list-toolkit_${ver}_x64-setup.exe" -Force
           $sig = (Get-Content (Get-ChildItem "$rel/bundle/nsis/*-setup.exe.sig" | Select-Object -First 1).FullName -Raw).Trim()
@@ -260,10 +246,6 @@ jobs:
               signature = $sig
               url = "https://github.com/${{ github.repository }}/releases/download/v${ver}/packing-list-toolkit_${ver}_x64-setup.exe"
             } }
-            portable = [ordered]@{
-              url = "https://github.com/${{ github.repository }}/releases/download/v${ver}/$pname.zip"
-              sha256 = $psha
-            }
           } | ConvertTo-Json -Depth 6
           [IO.File]::WriteAllText("$stage/latest.json", $latest, (New-Object System.Text.UTF8Encoding($false)))
       - name: 上传 Windows 产物
@@ -426,7 +408,7 @@ jobs:
           tag="${RELEASE_TAG}"; ver="${tag#v}"
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
           python3 - "$ver" "$base" <<'PY'
-          import hashlib, json, sys
+          import json, sys
           from pathlib import Path
           ver, base = sys.argv[1:]
           manifest_path = Path("artifacts/windows/latest.json")
@@ -441,12 +423,6 @@ jobs:
               item = data.get("platforms", {}).get(platform, {})
               if item.get("url") != url or not item.get("signature"):
                   raise SystemExit(f"{platform} 更新条目无效")
-          portable = Path(f"artifacts/windows/packing-list-toolkit_{ver}_x64_portable.zip")
-          portable_meta = data.get("portable", {})
-          if portable_meta.get("url") != f"{base}/{portable.name}":
-              raise SystemExit("便携包 URL 不一致")
-          if hashlib.sha256(portable.read_bytes()).hexdigest().lower() != str(portable_meta.get("sha256", "")).lower():
-              raise SystemExit("便携包 SHA256 不一致")
           required = [
               Path(f"artifacts/windows/packing-list-toolkit_{ver}_x64-setup.exe"),
               Path(f"artifacts/macos/packing-list-toolkit_{ver}_arm64.dmg"),
@@ -554,8 +530,6 @@ jobs:
           for item in data.get("platforms", {}).values():
               if item.get("url"):
                   item["url"] = public_url(Path(urlparse(item["url"]).path).name)
-          if data.get("portable", {}).get("url"):
-              data["portable"]["url"] = public_url(Path(urlparse(data["portable"]["url"]).path).name)
           body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
           client.put_object(Bucket=bucket, Body=body, Key=key("latest.json"), ContentType="application/json; charset=utf-8")
           print(json.dumps(data, ensure_ascii=False, indent=2))
@@ -641,8 +615,6 @@ jobs:
           for plat in data.get("platforms", {}).values():
               if plat.get("url"):
                   plat["url"] = public_url(plat["url"])
-          if data.get("portable", {}).get("url"):
-              data["portable"]["url"] = public_url(data["portable"]["url"])
           Path("r2-assets/latest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
           print(json.dumps(data, ensure_ascii=False, indent=2))
           PY
@@ -661,7 +633,6 @@ jobs:
             [ "$ver" = "$current" ] && continue
             for name in \
               "packing-list-toolkit_${ver}_x64-setup.exe" \
-              "packing-list-toolkit_${ver}_x64_portable.zip" \
               "packing-list-toolkit_${ver}_arm64.dmg" \
               "packing-list-toolkit_${ver}_aarch64.app.tar.gz" \
               "packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
