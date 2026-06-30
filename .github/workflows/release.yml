@@ -193,13 +193,17 @@ jobs:
         shell: pwsh
         run: |
           $root = Join-Path $env:GITHUB_WORKSPACE "source"
+          New-Item -ItemType Directory -Force "$root/src-tauri/binaries" | Out-Null
+          Remove-Item "$root/src-tauri/binaries/packing-worker-x86_64-pc-windows-msvc.exe" -Force -ErrorAction SilentlyContinue
           python -m PyInstaller --noconfirm --clean --onefile --name packing-worker `
             --distpath "$root/python/dist" --workpath "$root/python/build" `
+            --paths "$root/python" `
             --add-data "$root/python/engine;engine" `
             --hidden-import glob --hidden-import copy --hidden-import collections `
             --hidden-import zipfile --hidden-import urllib.request --hidden-import urllib.parse `
+            --hidden-import worker_events --hidden-import worker_paths --hidden-import worker_runtime `
+            --hidden-import worker_preflight --hidden-import worker_cold --hidden-import worker_jobs `
             "$root/python/worker.py"
-          New-Item -ItemType Directory -Force "$root/src-tauri/binaries" | Out-Null
           Copy-Item "$root/python/dist/packing-worker.exe" "$root/src-tauri/binaries/packing-worker-x86_64-pc-windows-msvc.exe" -Force
       - name: 导入代码签名证书
         shell: pwsh
