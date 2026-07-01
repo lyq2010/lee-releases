@@ -170,6 +170,12 @@ jobs:
           path: source
           token: ${{ steps.source-token.outputs.token }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: 准备 Rust 测试用 sidecar 占位文件
+        shell: pwsh
+        run: |
+          $bin = "source/src-tauri/binaries"
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          [IO.File]::WriteAllBytes("$bin/packing-worker-x86_64-pc-windows-msvc.exe", [byte[]](0))
       - name: Rust 单元测试
         working-directory: source/src-tauri
         run: cargo test
