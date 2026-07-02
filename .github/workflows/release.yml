@@ -128,7 +128,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24.18.0
       - name: 安装 Python 依赖
         working-directory: source
         run: python -m pip install -r python/requirements.txt
@@ -203,7 +203,7 @@ jobs:
           token: ${{ steps.source-token.outputs.token }}
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24.18.0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -231,20 +231,8 @@ jobs:
           [IO.File]::WriteAllText($path, "BASE_URL = $encoded`n", [Text.UTF8Encoding]::new($false))
       - name: 构建 Python sidecar
         shell: pwsh
-        run: |
-          $root = Join-Path $env:GITHUB_WORKSPACE "source"
-          New-Item -ItemType Directory -Force "$root/src-tauri/binaries" | Out-Null
-          Remove-Item "$root/src-tauri/binaries/packing-worker-x86_64-pc-windows-msvc.exe" -Force -ErrorAction SilentlyContinue
-          python -m PyInstaller --noconfirm --clean --onefile --name packing-worker `
-            --distpath "$root/python/dist" --workpath "$root/python/build" `
-            --paths "$root/python" `
-            --add-data "$root/python/engine;engine" `
-            --hidden-import glob --hidden-import copy --hidden-import collections `
-            --hidden-import zipfile --hidden-import urllib.request --hidden-import urllib.parse `
-            --hidden-import worker_events --hidden-import worker_paths --hidden-import worker_runtime `
-            --hidden-import worker_preflight --hidden-import worker_cold --hidden-import worker_jobs `
-            "$root/python/worker.py"
-          Copy-Item "$root/python/dist/packing-worker.exe" "$root/src-tauri/binaries/packing-worker-x86_64-pc-windows-msvc.exe" -Force
+        working-directory: source
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File ./python/build_worker.ps1
       - name: 导入代码签名证书
         shell: pwsh
         run: |
@@ -321,7 +309,7 @@ jobs:
           token: ${{ steps.source-token.outputs.token }}
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24.18.0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
