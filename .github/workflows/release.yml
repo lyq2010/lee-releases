@@ -494,7 +494,8 @@ jobs:
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
           sig_file="artifacts/macos/packing-list-toolkit_${ver}_aarch64.app.tar.gz.sig"
           tar_url="${base}/packing-list-toolkit_${ver}_aarch64.app.tar.gz"
-          python3 - "$sig_file" "$tar_url" <<'PY'
+          native_url="${base}/packing-list-toolkit_${ver}_macos-native-arm64.dmg"
+          python3 - "$sig_file" "$tar_url" "$native_url" <<'PY'
           import json, sys
           from pathlib import Path
           sig = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
@@ -503,6 +504,9 @@ jobs:
           manifest = Path("artifacts/windows/latest.json")
           data = json.loads(manifest.read_text(encoding="utf-8"))
           data["platforms"]["darwin-aarch64"] = {"signature": sig, "url": sys.argv[2]}
+          # Tauri requires every platforms entry to include signature, even for
+          # non-Tauri targets it will never select.
+          data["platforms"]["darwin-aarch64-native"] = {"signature": sig, "url": sys.argv[3]}
           manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
           print(json.dumps(data, ensure_ascii=False, indent=2))
           PY
@@ -522,6 +526,7 @@ jobs:
           expected = {
               "windows-x86_64": f"{base}/packing-list-toolkit_{ver}_x64-setup.exe",
               "darwin-aarch64": f"{base}/packing-list-toolkit_{ver}_aarch64.app.tar.gz",
+              "darwin-aarch64-native": f"{base}/packing-list-toolkit_{ver}_macos-native-arm64.dmg",
           }
           for platform, url in expected.items():
               item = data.get("platforms", {}).get(platform, {})
