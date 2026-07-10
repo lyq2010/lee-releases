@@ -154,6 +154,7 @@ jobs:
           cp "$dmg" release-stage/
           cp "$dmg.sig" release-stage/
           python3 - <<'PY'
+          import base64
           import json
           import os
           from datetime import datetime, timezone
@@ -162,9 +163,13 @@ jobs:
           version = os.environ["VERSION"]
           tag = os.environ["PUBLIC_TAG"]
           name = f"packing-list-toolkit_{version}_macos-native-arm64.dmg"
-          signature = Path(f"dist/{name}.sig").read_text(encoding="utf-8").strip()
-          if not signature:
-              raise SystemExit("Native DMG signature is empty")
+          encoded_signature = Path(f"dist/{name}.sig").read_text(encoding="utf-8").strip()
+          try:
+              signature = base64.b64decode(encoded_signature, validate=True).decode("utf-8").strip()
+          except Exception as exc:
+              raise SystemExit(f"Native DMG signature is invalid: {exc}") from exc
+          if len(signature.splitlines()) != 4 or not signature.startswith("untrusted comment:"):
+              raise SystemExit("Native DMG signature is not a minisign signature")
           base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}"
           data = {
               "version": version,
