@@ -246,6 +246,25 @@ jobs:
           item["url"] = f"{base}/{dmg}"
           body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
           client.put_object(Bucket=bucket, Body=body, Key=key("latest-native.json"), ContentType="application/json; charset=utf-8")
+
+          current_key = key(dmg)
+          marker = ""
+          while True:
+              kwargs = {"Bucket": bucket, "Prefix": key("packing-list-toolkit_"), "MaxKeys": 1000}
+              if marker:
+                  kwargs["Marker"] = marker
+              listed = client.list_objects(**kwargs)
+              for obj in listed.get("Contents", []) or []:
+                  obj_key = obj.get("Key", "")
+                  if obj_key.endswith("_macos-native-arm64.dmg") and obj_key != current_key:
+                      client.delete_object(Bucket=bucket, Key=obj_key)
+                      print(f"Deleted old native mirror: {obj_key}")
+              if listed.get("IsTruncated") in ("true", True):
+                  marker = listed.get("NextMarker") or ""
+                  if marker:
+                      continue
+              break
+
           with urllib.request.urlopen(f"{base}/latest-native.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
               published = json.loads(response.read().decode("utf-8"))
           if published.get("version") != os.environ["VERSION"]:
@@ -301,6 +320,56 @@ jobs:
           dmg="packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-native.json" --file assets/latest-native.json --content-type "application/json; charset=utf-8" --remote
+          python3 - "$account_id" <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          account_id = sys.argv[1]
+          bucket = os.environ["R2_BUCKET"].strip()
+          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          current = f"packing-list-toolkit_{os.environ['VERSION']}_macos-native-arm64.dmg"
+          prefix = "packing-list-toolkit_"
+
+          def request(method, path, params=None):
+              url = f"https://api.cloudflare.com/client/v4{path}"
+              if params:
+                  url = f"{url}?{urllib.parse.urlencode(params)}"
+              req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+              if not data.get("success"):
+                  raise SystemExit(json.dumps(data, ensure_ascii=False))
+              return data
+
+          bucket_path = (
+              f"/accounts/{urllib.parse.quote(account_id, safe='')}"
+              f"/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
+          )
+          cursor = ""
+          stale = []
+          while True:
+              params = {"prefix": prefix, "per_page": "1000"}
+              if cursor:
+                  params["cursor"] = cursor
+              data = request("GET", bucket_path, params)
+              for obj in data.get("result") or []:
+                  key = obj.get("key", "")
+                  if key.endswith("_macos-native-arm64.dmg") and key != current:
+                      stale.append(key)
+              info = data.get("result_info") or {}
+              if not info.get("is_truncated"):
+                  break
+              cursor = info.get("cursor") or ""
+              if not cursor:
+                  raise SystemExit("R2 listing was truncated without a cursor")
+
+          for key in stale:
+              request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
+              print(f"Deleted old native mirror: {key}")
+          PY
           curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-native.json?verify=${GITHUB_RUN_ID}" |
             python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]'
           echo "R2 native mirror complete"
