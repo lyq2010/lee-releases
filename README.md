@@ -8,7 +8,7 @@
 |---|---|---|
 | Windows x64 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
 | macOS Apple Silicon | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
-| macOS Apple Silicon 原生版 | [原生版下载](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/native-v3.0.1) | `packing-list-toolkit_*_macos-native-arm64.dmg` |
+| macOS Apple Silicon 原生版 | [原生版下载](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/native-v3.0.2) | `packing-list-toolkit_*_macos-native-arm64.dmg` |
 
 Windows 运行安装程序完成安装。macOS 打开 DMG 后将应用拖入「应用程序」；如系统阻止首次打开，请在「系统设置 → 隐私与安全性」中允许。
 

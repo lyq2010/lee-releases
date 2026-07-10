@@ -81,9 +81,18 @@ jobs:
           test "$(xcodebuild -version | sed -n 's/^Xcode //p')" = "26.6"
           test "$sdk_version" = "26.5"
 
-      - name: Set native version
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Verify native source version
         working-directory: source
-        run: python3 scripts/set-version.py "${{ steps.tags.outputs.source_tag }}"
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' packaging/Info.plist)"
+          test "$actual" = "$VERSION"
 
       - name: Test native app
         working-directory: source
@@ -100,6 +109,18 @@ jobs:
           LAUNCHER_ACADEMY_URL: ${{ secrets.LAUNCHER_ACADEMY_URL }}
           LAUNCHER_EMAIL_URL: ${{ secrets.LAUNCHER_EMAIL_URL }}
         run: ./scripts/package-macos.sh
+
+      - name: Sign native DMG for automatic updates
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          dmg="dist/packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
+          npm exec --yes --package @tauri-apps/cli@2.11.2 -- tauri signer sign "$dmg"
+          test -s "$dmg.sig"
 
       - name: Verify package and linked SDK
         working-directory: source
@@ -131,6 +152,7 @@ jobs:
           mkdir -p release-stage
           dmg="dist/packing-list-toolkit_${VERSION}_macos-native-arm64.dmg"
           cp "$dmg" release-stage/
+          cp "$dmg.sig" release-stage/
           python3 - <<'PY'
           import json
           import os
@@ -140,12 +162,16 @@ jobs:
           version = os.environ["VERSION"]
           tag = os.environ["PUBLIC_TAG"]
           name = f"packing-list-toolkit_{version}_macos-native-arm64.dmg"
+          signature = Path(f"dist/{name}.sig").read_text(encoding="utf-8").strip()
+          if not signature:
+              raise SystemExit("Native DMG signature is empty")
           base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}"
           data = {
               "version": version,
               "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": {
                   "darwin-aarch64-native": {
+                      "signature": signature,
                       "url": f"{base}/{name}"
                   }
               }
@@ -269,6 +295,8 @@ jobs:
               published = json.loads(response.read().decode("utf-8"))
           if published.get("version") != os.environ["VERSION"]:
               sys.exit("COS latest-native.json version mismatch")
+          if not published.get("platforms", {}).get("darwin-aarch64-native", {}).get("signature"):
+              sys.exit("COS latest-native.json signature missing")
           print("COS native mirror complete")
           PY
 
@@ -371,5 +399,5 @@ jobs:
               print(f"Deleted old native mirror: {key}")
           PY
           curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-native.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]'
+            python3 -c 'import json, os, sys; data=json.load(sys.stdin); item=data.get("platforms", {}).get("darwin-aarch64-native", {}); assert data.get("version") == os.environ["VERSION"]; assert item.get("signature")'
           echo "R2 native mirror complete"
