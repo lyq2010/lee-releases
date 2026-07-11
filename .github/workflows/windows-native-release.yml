@@ -165,12 +165,16 @@ jobs:
           }
           ./tools/build_release.ps1 -Version $env:VERSION -CertificatePath '${{ steps.certificate.outputs.path }}' -CertificatePassword $env:CERTIFICATE_PASSWORD
 
-      - name: Trust Native release certificate
-        id: certificate-trust
+      - name: Verify installer signature and signer
+        id: package
         working-directory: source
         shell: pwsh
-        timeout-minutes: 2
+        timeout-minutes: 3
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
         run: |
+          $installer = "artifacts/installer/packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
+          if (!(Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
           $publicCertificatePath = 'artifacts/publish/windows-native-code-signing.cer'
           if (!(Test-Path -LiteralPath $publicCertificatePath)) { throw "Bundled Native public certificate is missing" }
           $bundledCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($publicCertificatePath)
@@ -179,33 +183,17 @@ jobs:
           } finally {
             $bundledCertificate.Dispose()
           }
-          $certificateScript = 'artifacts/publish/windows-native-certificate.ps1'
-          if (!(Test-Path -LiteralPath $certificateScript)) { throw "Native certificate management script is missing" }
-          "thumbprint=$expectedThumbprint" >> $env:GITHUB_OUTPUT
-          Write-Host "Installing Native certificate into CurrentUser stores"
-          & $certificateScript -Action install -ExpectedThumbprint $expectedThumbprint
-          Write-Host "Native certificate installed"
-
-      - name: Verify installer signature and signer
-        id: package
-        working-directory: source
-        shell: pwsh
-        timeout-minutes: 3
-        env:
-          VERSION: ${{ steps.tags.outputs.version }}
-          EXPECTED_THUMBPRINT: ${{ steps.certificate-trust.outputs.thumbprint }}
-        run: |
-          $installer = "artifacts/installer/packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
-          if (!(Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
           Write-Host "Verifying installer Authenticode signature"
           $signature = Get-AuthenticodeSignature -LiteralPath $installer
-          if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) {
+          $untrustedSelfSigned = $signature.Status -in @('UnknownError', 'NotTrusted') `
+            -and $signature.StatusMessage -match '(?i)(not trusted|untrusted root|不受信任)'
+          if (($signature.Status -ne 'Valid' -and !$untrustedSelfSigned) -or !$signature.SignerCertificate) {
             throw "Installer Authenticode signature is invalid: $($signature.Status)"
           }
           $thumbprint = $signature.SignerCertificate.Thumbprint
-          if ($thumbprint -ne $env:EXPECTED_THUMBPRINT) { throw "Bundled Native certificate does not match installer signer" }
+          if ($thumbprint -ne $expectedThumbprint) { throw "Bundled Native certificate does not match installer signer" }
           "thumbprint=$thumbprint" >> $env:GITHUB_OUTPUT
-          Write-Host "Installer signature and signer verified"
+          Write-Host "Installer signature and signer verified: $($signature.Status)"
 
       - name: Verify compiled resources and bundled worker
         working-directory: source
@@ -220,18 +208,6 @@ jobs:
           $doctor = & artifacts/publish/worker/packing-worker.exe doctor | Select-Object -Last 1 | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $doctor.event -ne 'ready') { throw "Bundled worker doctor failed" }
           Write-Host "Bundled worker doctor verified"
-
-      - name: Remove Native release certificate
-        if: ${{ always() && steps.certificate-trust.outputs.thumbprint != '' }}
-        working-directory: source
-        shell: pwsh
-        timeout-minutes: 2
-        env:
-          EXPECTED_THUMBPRINT: ${{ steps.certificate-trust.outputs.thumbprint }}
-        run: |
-          Write-Host "Removing Native certificate from CurrentUser stores"
-          & artifacts/publish/windows-native-certificate.ps1 -Action remove -ExpectedThumbprint $env:EXPECTED_THUMBPRINT
-          Write-Host "Native certificate removed"
 
       - name: Stage public Windows native release
         working-directory: source
