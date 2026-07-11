@@ -176,27 +176,34 @@ jobs:
           if (!(Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
           $publicCertificatePath = 'artifacts/publish/windows-native-code-signing.cer'
           if (!(Test-Path -LiteralPath $publicCertificatePath)) { throw "Bundled Native public certificate is missing" }
-          certutil -user -addstore -f Root $publicCertificatePath
-          if ($LASTEXITCODE -ne 0) { throw "Cannot trust Native root certificate on release runner" }
-          certutil -user -addstore -f TrustedPublisher $publicCertificatePath
-          if ($LASTEXITCODE -ne 0) { throw "Cannot trust Native publisher certificate on release runner" }
-          $signature = Get-AuthenticodeSignature -LiteralPath $installer
-          if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) {
-            throw "Installer Authenticode signature is invalid: $($signature.Status)"
-          }
-          $thumbprint = $signature.SignerCertificate.Thumbprint
-          if ([string]::IsNullOrWhiteSpace($thumbprint)) { throw "Installer certificate thumbprint is empty" }
           $bundledCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($publicCertificatePath)
           try {
-            if ($bundledCertificate.Thumbprint -ne $thumbprint) { throw "Bundled Native certificate does not match installer signer" }
+            $expectedThumbprint = $bundledCertificate.Thumbprint
           } finally {
             $bundledCertificate.Dispose()
           }
-          "thumbprint=$thumbprint" >> $env:GITHUB_OUTPUT
-          python tools/verify_pri.py --pri artifacts/publish/PackingListWindowsNative.pri
-          if (!(Test-Path -LiteralPath artifacts/publish/worker/packing-worker.exe)) { throw "Bundled worker is missing" }
-          $doctor = & artifacts/publish/worker/packing-worker.exe doctor | Select-Object -Last 1 | ConvertFrom-Json
-          if ($doctor.event -ne 'ready') { throw "Bundled worker doctor failed" }
+          $certificateScript = 'artifacts/publish/windows-native-certificate.ps1'
+          if (!(Test-Path -LiteralPath $certificateScript)) { throw "Native certificate management script is missing" }
+          & pwsh -NoProfile -ExecutionPolicy Bypass -File $certificateScript -Action install -ExpectedThumbprint $expectedThumbprint
+          if ($LASTEXITCODE -ne 0) { throw "Cannot trust Native certificate on release runner" }
+          try {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer
+            if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) {
+              throw "Installer Authenticode signature is invalid: $($signature.Status)"
+            }
+            $thumbprint = $signature.SignerCertificate.Thumbprint
+            if ($thumbprint -ne $expectedThumbprint) { throw "Bundled Native certificate does not match installer signer" }
+            "thumbprint=$thumbprint" >> $env:GITHUB_OUTPUT
+            python tools/verify_pri.py --pri artifacts/publish/PackingListWindowsNative.pri
+            if ($LASTEXITCODE -ne 0) { throw "Compiled PRI verification failed" }
+            if (!(Test-Path -LiteralPath artifacts/publish/worker/packing-worker.exe)) { throw "Bundled worker is missing" }
+            $doctor = & artifacts/publish/worker/packing-worker.exe doctor | Select-Object -Last 1 | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $doctor.event -ne 'ready') { throw "Bundled worker doctor failed" }
+          }
+          finally {
+            & pwsh -NoProfile -ExecutionPolicy Bypass -File $certificateScript -Action remove -ExpectedThumbprint $expectedThumbprint
+            if ($LASTEXITCODE -ne 0) { throw "Cannot remove Native certificate from release runner" }
+          }
 
       - name: Stage public Windows native release
         working-directory: source
