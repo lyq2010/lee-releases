@@ -1,0 +1,421 @@
+name: Native Windows Release
+
+on:
+  push:
+    tags: ["windows-native-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "原生私有仓源码 tag（如 v0.1.0）"
+        required: true
+        type: string
+      publish:
+        description: "创建公开 Release 并镜像到 COS/R2"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-native:
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    env:
+      SOURCE_REPO: lyq2010/packing-list-windows-native
+      UPSTREAM_REPO: lyq2010/packing-list-desktop
+      R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+    outputs:
+      source_tag: ${{ steps.tags.outputs.source_tag }}
+      public_tag: ${{ steps.tags.outputs.public_tag }}
+      version: ${{ steps.tags.outputs.version }}
+    steps:
+      - name: Resolve and validate tags
+        id: tags
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $sourceTag = '${{ inputs.tag }}'
+            $publicTag = "windows-native-$sourceTag"
+          } else {
+            $publicTag = '${{ github.ref_name }}'
+            $sourceTag = $publicTag -replace '^windows-native-', ''
+          }
+          if ($sourceTag -notmatch '^v\d+\.\d+\.\d+$') { throw "Invalid source tag: $sourceTag" }
+          if ($publicTag -ne "windows-native-$sourceTag") { throw "Invalid public tag: $publicTag" }
+          "source_tag=$sourceTag" >> $env:GITHUB_OUTPUT
+          "public_tag=$publicTag" >> $env:GITHUB_OUTPUT
+          "version=$($sourceTag.Substring(1))" >> $env:GITHUB_OUTPUT
+
+      - name: Create private source read token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: packing-list-windows-native,packing-list-desktop
+          permission-contents: read
+
+      - name: Checkout Windows native source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ steps.tags.outputs.source_tag }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+
+      - name: Read locked upstream commit
+        id: source-lock
+        shell: pwsh
+        run: |
+          $lock = Get-Content -Raw -Encoding UTF8 source/worker/source-lock.json | ConvertFrom-Json
+          if ($lock.sourceRepository -ne $env:UPSTREAM_REPO) { throw "Unexpected worker upstream: $($lock.sourceRepository)" }
+          if ($lock.sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Invalid locked upstream commit" }
+          "commit=$($lock.sourceCommit)" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout locked desktop upstream
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ steps.source-lock.outputs.commit }}
+          path: upstream-source
+          token: ${{ steps.source-token.outputs.token }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: upstream-source/package-lock.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.301
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install release dependencies
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          python -m pip install --disable-pip-version-check -r source/worker/python/requirements.txt pyinstaller
+          npm ci --ignore-scripts --prefix upstream-source
+
+      - name: Verify source version
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          [xml]$project = Get-Content -Raw -Encoding UTF8 source/src/PackingList.Windows/PackingList.Windows.csproj
+          $versionGroup = @($project.Project.PropertyGroup | Where-Object { $_.Version })[0]
+          $actual = [string]$versionGroup.Version
+          if ($actual -ne $env:VERSION) { throw "Source version mismatch: $actual != $env:VERSION" }
+
+      - name: Verify copy, worker and test gates
+        working-directory: source
+        shell: pwsh
+        run: |
+          python tools/ui_copy_baseline.py --source ../upstream-source --expected-commit ${{ steps.source-lock.outputs.commit }} --output artifacts/ui-copy-baseline.json
+          git diff --no-index --exit-code contracts/ui-copy-baseline.json artifacts/ui-copy-baseline.json
+          python tools/protocol_copy_baseline.py --source ../upstream-source --expected-commit ${{ steps.source-lock.outputs.commit }} --output artifacts/protocol-copy-baseline.json
+          git diff --no-index --exit-code contracts/protocol-copy-baseline.json artifacts/protocol-copy-baseline.json
+          python tools/baseline_to_resw.py --output artifacts/Resources.resw
+          git diff --no-index --exit-code src/PackingList.Windows/Strings/zh-CN/Resources.resw artifacts/Resources.resw
+          python tools/resourceize_xaml_copy.py --check
+          python tools/ui_copy_fixtures.py --check
+          python tools/ui_copy_audit.py --require-resourceized
+          python tools/protocol_copy_audit.py
+          python tools/worker_sync.py --check
+          python tools/run_worker_tests.py
+          dotnet restore PackingListWindowsNative.slnx
+          dotnet test tests/PackingList.Core.Tests/PackingList.Core.Tests.csproj -c Release -p:Platform=x64 --no-restore
+          dotnet test tests/PackingList.IntegrationTests/PackingList.IntegrationTests.csproj -c Release -p:Platform=x64 --no-restore
+
+      - name: Restore independent Windows native signing certificate
+        id: certificate
+        shell: pwsh
+        env:
+          CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_NATIVE_CERTIFICATE_PFX_BASE64 }}
+        run: |
+          $encoded = $env:CERTIFICATE_PFX_BASE64
+          if ([string]::IsNullOrWhiteSpace($encoded)) { throw "WINDOWS_NATIVE_CERTIFICATE_PFX_BASE64 is missing" }
+          $path = Join-Path $env:RUNNER_TEMP 'windows-native-signing.pfx'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($encoded))
+          "path=$path" >> $env:GITHUB_OUTPUT
+
+      - name: Build signed Windows native installer
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          MES_BASE_URL: ${{ secrets.MES_BASE_URL }}
+          LAUNCHER_PRODUCTION_URL: ${{ secrets.LAUNCHER_PRODUCTION_URL }}
+          LAUNCHER_OA_URL: ${{ secrets.LAUNCHER_OA_URL }}
+          LAUNCHER_ACADEMY_URL: ${{ secrets.LAUNCHER_ACADEMY_URL }}
+          LAUNCHER_EMAIL_URL: ${{ secrets.LAUNCHER_EMAIL_URL }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          R2_PUBLIC_BASE_URL: ${{ env.R2_PUBLIC_BASE_URL }}
+          PLT_TELEMETRY_URL: ${{ secrets.PLT_TELEMETRY_URL }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_NATIVE_CERTIFICATE_PASSWORD }}
+        run: ./tools/build_release.ps1 -Version $env:VERSION -CertificatePath '${{ steps.certificate.outputs.path }}' -CertificatePassword $env:CERTIFICATE_PASSWORD
+
+      - name: Verify package, signature and compiled resources
+        id: package
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          $installer = "artifacts/installer/packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
+          if (!(Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
+          $publicCertificatePath = 'artifacts/publish/windows-native-code-signing.cer'
+          if (!(Test-Path -LiteralPath $publicCertificatePath)) { throw "Bundled Native public certificate is missing" }
+          certutil -user -addstore -f Root $publicCertificatePath
+          if ($LASTEXITCODE -ne 0) { throw "Cannot trust Native root certificate on release runner" }
+          certutil -user -addstore -f TrustedPublisher $publicCertificatePath
+          if ($LASTEXITCODE -ne 0) { throw "Cannot trust Native publisher certificate on release runner" }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) {
+            throw "Installer Authenticode signature is invalid: $($signature.Status)"
+          }
+          $thumbprint = $signature.SignerCertificate.Thumbprint
+          if ([string]::IsNullOrWhiteSpace($thumbprint)) { throw "Installer certificate thumbprint is empty" }
+          $bundledCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($publicCertificatePath)
+          try {
+            if ($bundledCertificate.Thumbprint -ne $thumbprint) { throw "Bundled Native certificate does not match installer signer" }
+          } finally {
+            $bundledCertificate.Dispose()
+          }
+          "thumbprint=$thumbprint" >> $env:GITHUB_OUTPUT
+          python tools/verify_pri.py --pri artifacts/publish/PackingListWindowsNative.pri
+          if (!(Test-Path -LiteralPath artifacts/publish/worker/packing-worker.exe)) { throw "Bundled worker is missing" }
+          $doctor = & artifacts/publish/worker/packing-worker.exe doctor | Select-Object -Last 1 | ConvertFrom-Json
+          if ($doctor.event -ne 'ready') { throw "Bundled worker doctor failed" }
+
+      - name: Stage public Windows native release
+        working-directory: source
+        shell: pwsh
+        env:
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+          CERTIFICATE_THUMBPRINT: ${{ steps.package.outputs.thumbprint }}
+        run: |
+          $stage = 'release-stage'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $name = "packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
+          Copy-Item -LiteralPath "artifacts/installer/$name" -Destination "$stage/$name" -Force
+          $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
+          python tools/make_update_manifest.py --version $env:VERSION --installer "$stage/$name" --base-url $base --certificate-thumbprint $env:CERTIFICATE_THUMBPRINT --output "$stage/latest-windows-native.json"
+
+      - name: Create draft Windows native Release
+        if: github.event_name == 'push' || inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tags.outputs.public_tag }}
+          name: 建筑板部原生工具箱 for Win ${{ steps.tags.outputs.version }}
+          draft: true
+          make_latest: false
+          files: source/release-stage/*
+          body: Windows 11 原生版 ${{ steps.tags.outputs.version }}。
+
+      - name: Verify and publish Windows native Release
+        if: github.event_name == 'push' || inputs.publish
+        working-directory: source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+        run: |
+          New-Item -ItemType Directory -Force release-verify | Out-Null
+          gh release download $env:PUBLIC_TAG --repo $env:GITHUB_REPOSITORY --dir release-verify
+          Get-ChildItem -LiteralPath release-stage -File | ForEach-Object {
+            $target = Join-Path release-verify $_.Name
+            if (!(Test-Path -LiteralPath $target)) { throw "Missing draft asset: $target" }
+            if ((Get-FileHash -Algorithm SHA256 $_.FullName).Hash -ne (Get-FileHash -Algorithm SHA256 $target).Hash) {
+              throw "Draft asset mismatch: $($_.Name)"
+            }
+          }
+          gh release edit $env:PUBLIC_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=false
+
+  cos-windows-native-mirror:
+    needs: build-windows-native
+    if: ${{ needs.build-windows-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows native Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-windows-native.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-windows-native.json
+
+      - name: Mirror Windows native release to COS
+        env:
+          VERSION: ${{ needs.build-windows-native.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user cos-python-sdk-v5
+          python3 - <<'PY'
+          import hashlib, json, os, sys, urllib.request
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from qcloud_cos import CosConfig, CosS3Client
+
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme != "https" or not parsed.netloc:
+              sys.exit(f"COS_PUBLIC_BASE_URL is invalid: {base}")
+          prefix = parsed.path.strip("/")
+          key = lambda name: f"{prefix}/{name}" if prefix else name
+          client = CosS3Client(CosConfig(
+              Region=os.environ["TENCENT_COS_REGION"].strip(),
+              SecretId=os.environ["TENCENT_COS_SECRET_ID"].strip(),
+              SecretKey=os.environ["TENCENT_COS_SECRET_KEY"].strip(),
+              Scheme="https",
+          ))
+          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
+          manifest_path = Path("assets/latest-windows-native.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          installer = Path(urlparse(manifest["url"]).path).name
+          installer_path = Path("assets") / installer
+          if not installer_path.is_file():
+              sys.exit(f"Missing Windows native installer: {installer_path}")
+          actual_hash = hashlib.sha256(installer_path.read_bytes()).hexdigest().upper()
+          if actual_hash != manifest["sha256"].upper() or installer_path.stat().st_size != manifest["size"]:
+              sys.exit("Windows native installer hash or size mismatch")
+          client.upload_file(Bucket=bucket, LocalFilePath=str(installer_path), Key=key(installer), EnableMD5=False)
+          manifest["url"] = f"{base}/{installer}"
+          body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+          client.put_object(Bucket=bucket, Body=body, Key=key("latest-windows-native.json"), ContentType="application/json; charset=utf-8")
+
+          current_key = key(installer)
+          marker = ""
+          while True:
+              kwargs = {"Bucket": bucket, "Prefix": key("packing-list-toolkit_"), "MaxKeys": 1000}
+              if marker:
+                  kwargs["Marker"] = marker
+              listed = client.list_objects(**kwargs)
+              for obj in listed.get("Contents", []) or []:
+                  obj_key = obj.get("Key", "")
+                  if obj_key.endswith("_windows-native-x64-setup.exe") and obj_key != current_key:
+                      client.delete_object(Bucket=bucket, Key=obj_key)
+                      print(f"Deleted old Windows native mirror: {obj_key}")
+              if listed.get("IsTruncated") in ("true", True):
+                  marker = listed.get("NextMarker") or ""
+                  if marker:
+                      continue
+              break
+
+          with urllib.request.urlopen(f"{base}/latest-windows-native.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
+              published = json.loads(response.read().decode("utf-8"))
+          if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64-native":
+              sys.exit("COS latest-windows-native.json mismatch")
+          if published.get("sha256") != actual_hash or not published.get("certificateThumbprint"):
+              sys.exit("COS Windows native integrity fields mismatch")
+          print("COS Windows native mirror complete")
+          PY
+
+  r2-windows-native-mirror:
+    needs: build-windows-native
+    if: ${{ needs.build-windows-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    env:
+      R2_BUCKET: packing-list-releases
+      R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+    steps:
+      - name: Download Windows native Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-windows-native.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-windows-native.json
+
+      - name: Mirror Windows native release to R2
+        env:
+          VERSION: ${{ needs.build-windows-native.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          account_id="$(
+            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.cloudflare.com/client/v4/accounts |
+            python3 -c 'import json, sys; data=json.load(sys.stdin); accounts=data.get("result") or []; assert data.get("success") and accounts; print(accounts[0]["id"])'
+          )"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
+          path = Path("assets/latest-windows-native.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          installer = Path(urlparse(manifest["url"]).path).name
+          manifest["url"] = f"{base}/{installer}"
+          path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(installer)
+          PY
+          installer="packing-list-toolkit_${VERSION}_windows-native-x64-setup.exe"
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${installer}" --file "assets/${installer}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-windows-native.json" --file assets/latest-windows-native.json --content-type "application/json; charset=utf-8" --remote
+          python3 - "$account_id" <<'PY'
+          import json, os, sys, urllib.parse, urllib.request
+
+          account_id = sys.argv[1]
+          bucket = os.environ["R2_BUCKET"].strip()
+          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          current = f"packing-list-toolkit_{os.environ['VERSION']}_windows-native-x64-setup.exe"
+          prefix = "packing-list-toolkit_"
+
+          def request(method, path, params=None):
+              url = f"https://api.cloudflare.com/client/v4{path}"
+              if params:
+                  url = f"{url}?{urllib.parse.urlencode(params)}"
+              req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+              if not data.get("success"):
+                  raise SystemExit(json.dumps(data, ensure_ascii=False))
+              return data
+
+          bucket_path = f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
+          cursor = ""
+          stale = []
+          while True:
+              params = {"prefix": prefix, "per_page": "1000"}
+              if cursor:
+                  params["cursor"] = cursor
+              data = request("GET", bucket_path, params)
+              for obj in data.get("result") or []:
+                  key = obj.get("key", "")
+                  if key.endswith("_windows-native-x64-setup.exe") and key != current:
+                      stale.append(key)
+              info = data.get("result_info") or {}
+              if not info.get("is_truncated"):
+                  break
+              cursor = info.get("cursor") or ""
+              if not cursor:
+                  raise SystemExit("R2 listing was truncated without a cursor")
+          for key in stale:
+              request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
+              print(f"Deleted old Windows native mirror: {key}")
+          PY
+          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-windows-native.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]; assert data.get("platform") == "windows-x86_64-native"; assert data.get("sha256") and data.get("certificateThumbprint")'
+          echo "R2 Windows native mirror complete"
