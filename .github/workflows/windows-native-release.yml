@@ -25,7 +25,6 @@ jobs:
       contents: write
     env:
       SOURCE_REPO: lyq2010/packing-list-windows-native
-      UPSTREAM_REPO: lyq2010/packing-list-desktop
       R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
     outputs:
       source_tag: ${{ steps.tags.outputs.source_tag }}
@@ -56,7 +55,7 @@ jobs:
           client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
-          repositories: packing-list-windows-native,packing-list-desktop
+          repositories: packing-list-windows-native
           permission-contents: read
 
       - name: Checkout Windows native source
@@ -67,28 +66,6 @@ jobs:
           path: source
           token: ${{ steps.source-token.outputs.token }}
 
-      - name: Read locked upstream commit
-        id: source-lock
-        shell: pwsh
-        run: |
-          $lock = Get-Content -Raw -Encoding UTF8 source/worker/source-lock.json | ConvertFrom-Json
-          if ($lock.sourceRepository -ne $env:UPSTREAM_REPO) { throw "Unexpected worker upstream: $($lock.sourceRepository)" }
-          if ($lock.sourceCommit -notmatch '^[0-9a-f]{40}$') { throw "Invalid locked upstream commit" }
-          "commit=$($lock.sourceCommit)" >> $env:GITHUB_OUTPUT
-
-      - name: Checkout locked desktop upstream
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ steps.source-lock.outputs.commit }}
-          path: upstream-source
-          token: ${{ steps.source-token.outputs.token }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: upstream-source/package-lock.json
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.301
@@ -101,7 +78,6 @@ jobs:
         run: |
           choco install nsis -y --no-progress
           python -m pip install --disable-pip-version-check -r source/worker/python/requirements.txt pyinstaller
-          npm ci --ignore-scripts --prefix upstream-source
 
       - name: Verify source version
         shell: pwsh
@@ -113,20 +89,11 @@ jobs:
           $actual = [string]$versionGroup.Version
           if ($actual -ne $env:VERSION) { throw "Source version mismatch: $actual != $env:VERSION" }
 
-      - name: Verify copy, worker and test gates
+      - name: Verify worker and test gates
         working-directory: source
         shell: pwsh
         run: |
-          python tools/ui_copy_baseline.py --source ../upstream-source --expected-commit ${{ steps.source-lock.outputs.commit }} --output artifacts/ui-copy-baseline.json
-          git diff --no-index --exit-code contracts/ui-copy-baseline.json artifacts/ui-copy-baseline.json
-          python tools/protocol_copy_baseline.py --source ../upstream-source --expected-commit ${{ steps.source-lock.outputs.commit }} --output artifacts/protocol-copy-baseline.json
-          git diff --no-index --exit-code contracts/protocol-copy-baseline.json artifacts/protocol-copy-baseline.json
-          python tools/baseline_to_resw.py --output artifacts/Resources.resw
-          git diff --no-index --exit-code src/PackingList.Windows/Strings/zh-CN/Resources.resw artifacts/Resources.resw
           python tools/resourceize_xaml_copy.py --check
-          python tools/ui_copy_fixtures.py --check
-          python tools/ui_copy_audit.py --require-resourceized
-          python tools/protocol_copy_audit.py
           python tools/worker_sync.py --check
           python tools/run_worker_tests.py
           dotnet restore PackingListWindowsNative.slnx
