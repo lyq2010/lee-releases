@@ -159,7 +159,11 @@ jobs:
           R2_PUBLIC_BASE_URL: ${{ env.R2_PUBLIC_BASE_URL }}
           PLT_TELEMETRY_URL: ${{ secrets.PLT_TELEMETRY_URL }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_NATIVE_CERTIFICATE_PASSWORD }}
-        run: ./tools/build_release.ps1 -Version $env:VERSION -CertificatePath '${{ steps.certificate.outputs.path }}' -CertificatePassword $env:CERTIFICATE_PASSWORD
+        run: |
+          if ($env:COS_PUBLIC_BASE_URL -and $env:COS_PUBLIC_BASE_URL -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://') {
+            $env:COS_PUBLIC_BASE_URL = "https://$($env:COS_PUBLIC_BASE_URL)"
+          }
+          ./tools/build_release.ps1 -Version $env:VERSION -CertificatePath '${{ steps.certificate.outputs.path }}' -CertificatePassword $env:CERTIFICATE_PASSWORD
 
       - name: Verify package, signature and compiled resources
         id: package
