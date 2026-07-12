@@ -133,6 +133,9 @@ jobs:
           test -x "$binary"
           test -x "$resources/packing-worker-aarch64-apple-darwin"
           test -s "$resources/zcool-kuaile-subset.ttf"
+          test -s "$resources/AppIcon.icns"
+          test -s "$resources/AppIconLight.png"
+          test -s "$resources/AppIconDark.png"
           test -s "$resources/mes-base-url.txt"
           test -s "$resources/launcher-urls.json"
           grep -q '/latest-native.json' "$resources/native-update-manifest-urls.txt"
@@ -188,6 +191,31 @@ jobs:
           print(json.dumps(data, ensure_ascii=False, indent=2))
           PY
 
+      - name: Extract native release notes
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = re.escape(os.environ["VERSION"])
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(
+              rf"^## \[{version}\][^\n]*\n\n(?P<body>.*?)(?=^## \[|\Z)",
+              changelog,
+              flags=re.MULTILINE | re.DOTALL,
+          )
+          if match is None:
+              raise SystemExit(f"CHANGELOG.md 缺少版本 {os.environ['VERSION']} 的发布说明")
+          notes = match.group("body").strip()
+          if not notes:
+              raise SystemExit("原生 macOS 发布说明为空")
+          Path("release-notes.md").write_text(notes + "\n", encoding="utf-8")
+          PY
+
       - name: Create draft native Release
         if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@v3
@@ -197,7 +225,7 @@ jobs:
           draft: true
           make_latest: false
           files: source/release-stage/*
-          body: SwiftUI 原生 macOS 版 ${{ steps.tags.outputs.version }}。
+          body_path: source/release-notes.md
 
       - name: Verify and publish native Release
         if: github.event_name == 'push' || inputs.publish
