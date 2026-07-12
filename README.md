@@ -7,7 +7,7 @@
 | 系统 | 下载入口 | 安装文件 |
 |---|---|---|
 | Windows x64 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
-| Windows 11 x64 原生版 | [Windows Native v1.0.3](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/windows-native-v1.0.3) | `packing-list-toolkit_*_windows-native-x64-setup.exe` |
+| Windows 11 x64 原生版 | [Windows Native v1.0.4](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/windows-native-v1.0.4) | `packing-list-toolkit_*_windows-native-x64-setup.exe` |
 | macOS Apple Silicon | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
 | macOS Apple Silicon 原生版 | [原生版下载](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/native-v3.0.4) | `packing-list-toolkit_*_macos-native-arm64.dmg` |
 
