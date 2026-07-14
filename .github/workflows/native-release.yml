@@ -167,8 +167,9 @@ jobs:
 
           version = os.environ["VERSION"]
           tag = os.environ["PUBLIC_TAG"]
-          name = f"Lee’s Toolbox Mac_{version}_macOS_arm64.dmg"
-          encoded_signature = Path(f"dist/{name}.sig").read_text(encoding="utf-8").strip()
+          source_name = f"Lee’s Toolbox Mac_{version}_macOS_arm64.dmg"
+          asset_name = f"Lee.s.Toolbox.Mac_{version}_macOS_arm64.dmg"
+          encoded_signature = Path(f"dist/{source_name}.sig").read_text(encoding="utf-8").strip()
           try:
               signature = base64.b64decode(encoded_signature, validate=True).decode("utf-8").strip()
           except Exception as exc:
@@ -182,7 +183,7 @@ jobs:
               "platforms": {
                   "darwin-aarch64-native": {
                       "signature": signature,
-                      "url": f"{base}/{name}"
+                      "url": f"{base}/{asset_name}"
                   }
               }
           }
@@ -235,15 +236,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
           mkdir release-verify
           gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir release-verify
-          for source in release-stage/*; do
-            target="release-verify/$(basename "$source")"
-            test -s "$target"
-            cmp "$source" "$target"
-          done
+          source_dmg="release-stage/Lee’s Toolbox Mac_${VERSION}_macOS_arm64.dmg"
+          downloaded_dmg="release-verify/Lee.s.Toolbox.Mac_${VERSION}_macOS_arm64.dmg"
+          test -s "$downloaded_dmg"
+          test -s "$downloaded_dmg.sig"
+          test -s release-verify/latest-native.json
+          cmp "$source_dmg" "$downloaded_dmg"
+          cmp "$source_dmg.sig" "$downloaded_dmg.sig"
+          cmp release-stage/latest-native.json release-verify/latest-native.json
           gh release edit "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
 
   cos-native-mirror:
@@ -311,7 +316,7 @@ jobs:
           current_key = key(dmg)
           for object_prefix, suffix in (
               ("packing-list-toolkit_", "_macos-native-arm64.dmg"),
-              ("Lee’s Toolbox Mac_", "_macOS_arm64.dmg"),
+              ("Lee.s.Toolbox.Mac_", "_macOS_arm64.dmg"),
           ):
               marker = ""
               while True:
@@ -384,7 +389,7 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           print(dmg)
           PY
-          dmg="Lee’s Toolbox Mac_${VERSION}_macOS_arm64.dmg"
+          dmg="Lee.s.Toolbox.Mac_${VERSION}_macOS_arm64.dmg"
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-native.json" --file assets/latest-native.json --content-type "application/json; charset=utf-8" --remote
           python3 - "$account_id" <<'PY'
@@ -397,10 +402,10 @@ jobs:
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"].strip()
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-          current = f"Lee’s Toolbox Mac_{os.environ['VERSION']}_macOS_arm64.dmg"
+          current = f"Lee.s.Toolbox.Mac_{os.environ['VERSION']}_macOS_arm64.dmg"
           patterns = (
               ("packing-list-toolkit_", "_macos-native-arm64.dmg"),
-              ("Lee’s Toolbox Mac_", "_macOS_arm64.dmg"),
+              ("Lee.s.Toolbox.Mac_", "_macOS_arm64.dmg"),
           )
 
           def request(method, path, params=None):
