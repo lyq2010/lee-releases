@@ -1,12 +1,12 @@
-name: Native Windows Release
+name: Lee's Toolbox Windows Release
 
 on:
   push:
-    tags: ["windows-native-v*"]
+    tags: ["lees-toolbox-windows-v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "原生私有仓源码 tag（如 v0.1.0）"
+        description: "Lee's Toolbox Windows 私有仓源码 tag（如 v1.0.4）"
         required: true
         type: string
       publish:
@@ -19,12 +19,12 @@ permissions:
   contents: read
 
 jobs:
-  build-windows-native:
+  build-lees-toolbox-windows:
     runs-on: windows-2025
     permissions:
       contents: write
     env:
-      SOURCE_REPO: lyq2010/packing-list-windows-native
+      SOURCE_REPO: lyq2010/lees-toolbox-windows
       R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
     outputs:
       source_tag: ${{ steps.tags.outputs.source_tag }}
@@ -37,13 +37,13 @@ jobs:
         run: |
           if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
             $sourceTag = '${{ inputs.tag }}'
-            $publicTag = "windows-native-$sourceTag"
+            $publicTag = "lees-toolbox-windows-$sourceTag"
           } else {
             $publicTag = '${{ github.ref_name }}'
-            $sourceTag = $publicTag -replace '^windows-native-', ''
+            $sourceTag = $publicTag -replace '^lees-toolbox-windows-', ''
           }
           if ($sourceTag -notmatch '^v\d+\.\d+\.\d+$') { throw "Invalid source tag: $sourceTag" }
-          if ($publicTag -ne "windows-native-$sourceTag") { throw "Invalid public tag: $publicTag" }
+          if ($publicTag -ne "lees-toolbox-windows-$sourceTag") { throw "Invalid public tag: $publicTag" }
           "source_tag=$sourceTag" >> $env:GITHUB_OUTPUT
           "public_tag=$publicTag" >> $env:GITHUB_OUTPUT
           "version=$($sourceTag.Substring(1))" >> $env:GITHUB_OUTPUT
@@ -55,10 +55,10 @@ jobs:
           client-id: ${{ secrets.SOURCE_APP_ID }}
           private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
           owner: lyq2010
-          repositories: packing-list-windows-native
+          repositories: lees-toolbox-windows
           permission-contents: read
 
-      - name: Checkout Windows native source
+      - name: Checkout Lee's Toolbox Windows source
         uses: actions/checkout@v7
         with:
           repository: ${{ env.SOURCE_REPO }}
@@ -77,7 +77,6 @@ jobs:
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
-          python -m pip install --disable-pip-version-check -r source/worker/python/requirements.txt pyinstaller
 
       - name: Verify source version
         shell: pwsh
@@ -93,14 +92,18 @@ jobs:
         working-directory: source
         shell: pwsh
         run: |
+          python tools/baseline_to_resw.py --output artifacts/Resources.resw
+          git diff --no-index --exit-code src/PackingList.Windows/Strings/zh-CN/Resources.resw artifacts/Resources.resw
           python tools/resourceize_xaml_copy.py --check
-          python tools/worker_sync.py --check
-          python tools/run_worker_tests.py
-          dotnet restore PackingListWindowsNative.slnx
+          python tools/ui_copy_fixtures.py --check
+          python tools/ui_copy_audit.py --require-resourceized
+          python tools/protocol_copy_audit.py
+          dotnet restore LeesToolboxWindows.slnx
+          dotnet test tests/PackingList.Worker.Tests/PackingList.Worker.Tests.csproj -c Release -p:Platform=x64 --no-restore
           dotnet test tests/PackingList.Core.Tests/PackingList.Core.Tests.csproj -c Release -p:Platform=x64 --no-restore
           dotnet test tests/PackingList.IntegrationTests/PackingList.IntegrationTests.csproj -c Release -p:Platform=x64 --no-restore
 
-      - name: Restore independent Windows native signing certificate
+      - name: Restore Lee's Toolbox Windows signing certificate
         id: certificate
         shell: pwsh
         env:
@@ -108,11 +111,11 @@ jobs:
         run: |
           $encoded = $env:CERTIFICATE_PFX_BASE64
           if ([string]::IsNullOrWhiteSpace($encoded)) { throw "WINDOWS_NATIVE_CERTIFICATE_PFX_BASE64 is missing" }
-          $path = Join-Path $env:RUNNER_TEMP 'windows-native-signing.pfx'
+          $path = Join-Path $env:RUNNER_TEMP 'lees-toolbox-windows-signing.pfx'
           [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($encoded))
           "path=$path" >> $env:GITHUB_OUTPUT
 
-      - name: Build signed Windows native installer
+      - name: Build signed Lee's Toolbox Windows installer
         working-directory: source
         shell: pwsh
         env:
@@ -140,9 +143,9 @@ jobs:
         env:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
-          $installer = "artifacts/installer/packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
+          $installer = "artifacts/installer/lees-toolbox-windows_${env:VERSION}_x64-setup.exe"
           if (!(Test-Path -LiteralPath $installer)) { throw "Missing installer: $installer" }
-          $publicCertificatePath = 'artifacts/publish/windows-native-code-signing.cer'
+          $publicCertificatePath = 'artifacts/publish/lees-toolbox-windows-code-signing.cer'
           if (!(Test-Path -LiteralPath $publicCertificatePath)) { throw "Bundled Native public certificate is missing" }
           $bundledCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($publicCertificatePath)
           try {
@@ -168,7 +171,7 @@ jobs:
         timeout-minutes: 3
         run: |
           Write-Host "Verifying compiled PRI"
-          python tools/verify_pri.py --pri artifacts/publish/PackingListWindowsNative.pri
+          python tools/verify_pri.py --pri artifacts/publish/LeesToolboxWindows.pri
           if ($LASTEXITCODE -ne 0) { throw "Compiled PRI verification failed" }
           if (!(Test-Path -LiteralPath artifacts/publish/worker/packing-worker.exe)) { throw "Bundled worker is missing" }
           Write-Host "Running bundled worker doctor"
@@ -176,7 +179,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $doctor.event -ne 'ready') { throw "Bundled worker doctor failed" }
           Write-Host "Bundled worker doctor verified"
 
-      - name: Stage public Windows native release
+      - name: Stage public Lee's Toolbox Windows release
         working-directory: source
         shell: pwsh
         env:
@@ -186,24 +189,24 @@ jobs:
         run: |
           $stage = 'release-stage'
           New-Item -ItemType Directory -Force $stage | Out-Null
-          $name = "packing-list-toolkit_${env:VERSION}_windows-native-x64-setup.exe"
+          $name = "lees-toolbox-windows_${env:VERSION}_x64-setup.exe"
           Copy-Item -LiteralPath "artifacts/installer/$name" -Destination "$stage/$name" -Force
           $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
           python tools/release_notes.py --version $env:VERSION --output artifacts/release-notes.md
-          python tools/make_update_manifest.py --version $env:VERSION --installer "$stage/$name" --base-url $base --certificate-thumbprint $env:CERTIFICATE_THUMBPRINT --notes-file artifacts/release-notes.md --output "$stage/latest-windows-native.json"
+          python tools/make_update_manifest.py --version $env:VERSION --installer "$stage/$name" --base-url $base --certificate-thumbprint $env:CERTIFICATE_THUMBPRINT --notes-file artifacts/release-notes.md --output "$stage/latest-lees-toolbox-windows.json"
 
-      - name: Create draft Windows native Release
+      - name: Create draft Lee's Toolbox Windows Release
         if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tags.outputs.public_tag }}
-          name: 建筑板部原生工具箱 for Win ${{ steps.tags.outputs.version }}
+          name: Lee's 工具箱 Windows ${{ steps.tags.outputs.version }}
           draft: true
           make_latest: false
           files: source/release-stage/*
           body_path: source/artifacts/release-notes.md
 
-      - name: Verify and publish Windows native Release
+      - name: Verify and publish Lee's Toolbox Windows Release
         if: github.event_name == 'push' || inputs.publish
         working-directory: source
         shell: pwsh
@@ -222,24 +225,24 @@ jobs:
           }
           gh release edit $env:PUBLIC_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=false
 
-  cos-windows-native-mirror:
-    needs: build-windows-native
-    if: ${{ needs.build-windows-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+  cos-lees-toolbox-windows-mirror:
+    needs: build-lees-toolbox-windows
+    if: ${{ needs.build-lees-toolbox-windows.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
     steps:
-      - name: Download Windows native Release
+      - name: Download Lee's Toolbox Windows Release
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.build-windows-native.outputs.public_tag }}
+          PUBLIC_TAG: ${{ needs.build-lees-toolbox-windows.outputs.public_tag }}
         run: |
           set -euo pipefail
           mkdir assets
           gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
-          test -s assets/latest-windows-native.json
+          test -s assets/latest-lees-toolbox-windows.json
 
-      - name: Mirror Windows native release to COS
+      - name: Mirror Lee's Toolbox Windows release to COS
         env:
-          VERSION: ${{ needs.build-windows-native.outputs.version }}
+          VERSION: ${{ needs.build-lees-toolbox-windows.outputs.version }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
           TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
@@ -269,68 +272,68 @@ jobs:
               Scheme="https",
           ))
           bucket = os.environ["TENCENT_COS_BUCKET"].strip()
-          manifest_path = Path("assets/latest-windows-native.json")
+          manifest_path = Path("assets/latest-lees-toolbox-windows.json")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           installer = Path(urlparse(manifest["url"]).path).name
           installer_path = Path("assets") / installer
           if not installer_path.is_file():
-              sys.exit(f"Missing Windows native installer: {installer_path}")
+              sys.exit(f"Missing Lee's Toolbox Windows installer: {installer_path}")
           actual_hash = hashlib.sha256(installer_path.read_bytes()).hexdigest().upper()
           if actual_hash != manifest["sha256"].upper() or installer_path.stat().st_size != manifest["size"]:
-              sys.exit("Windows native installer hash or size mismatch")
+              sys.exit("Lee's Toolbox Windows installer hash or size mismatch")
           client.upload_file(Bucket=bucket, LocalFilePath=str(installer_path), Key=key(installer), EnableMD5=False)
           manifest["url"] = f"{base}/{installer}"
           body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-          client.put_object(Bucket=bucket, Body=body, Key=key("latest-windows-native.json"), ContentType="application/json; charset=utf-8")
+          client.put_object(Bucket=bucket, Body=body, Key=key("latest-lees-toolbox-windows.json"), ContentType="application/json; charset=utf-8")
 
           current_key = key(installer)
           marker = ""
           while True:
-              kwargs = {"Bucket": bucket, "Prefix": key("packing-list-toolkit_"), "MaxKeys": 1000}
+              kwargs = {"Bucket": bucket, "Prefix": key("lees-toolbox-windows_"), "MaxKeys": 1000}
               if marker:
                   kwargs["Marker"] = marker
               listed = client.list_objects(**kwargs)
               for obj in listed.get("Contents", []) or []:
                   obj_key = obj.get("Key", "")
-                  if obj_key.endswith("_windows-native-x64-setup.exe") and obj_key != current_key:
+                  if obj_key.endswith("_x64-setup.exe") and obj_key != current_key:
                       client.delete_object(Bucket=bucket, Key=obj_key)
-                      print(f"Deleted old Windows native mirror: {obj_key}")
+                      print(f"Deleted old Lee's Toolbox Windows mirror: {obj_key}")
               if listed.get("IsTruncated") in ("true", True):
                   marker = listed.get("NextMarker") or ""
                   if marker:
                       continue
               break
 
-          with urllib.request.urlopen(f"{base}/latest-windows-native.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
+          with urllib.request.urlopen(f"{base}/latest-lees-toolbox-windows.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
               published = json.loads(response.read().decode("utf-8"))
-          if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64-native":
-              sys.exit("COS latest-windows-native.json mismatch")
+          if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64":
+              sys.exit("COS latest-lees-toolbox-windows.json mismatch")
           if published.get("sha256") != actual_hash or not published.get("certificateThumbprint"):
-              sys.exit("COS Windows native integrity fields mismatch")
-          print("COS Windows native mirror complete")
+              sys.exit("COS Lee's Toolbox Windows integrity fields mismatch")
+          print("COS Lee's Toolbox Windows mirror complete")
           PY
 
-  r2-windows-native-mirror:
-    needs: build-windows-native
-    if: ${{ needs.build-windows-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+  r2-lees-toolbox-windows-mirror:
+    needs: build-lees-toolbox-windows
+    if: ${{ needs.build-lees-toolbox-windows.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
     env:
       R2_BUCKET: packing-list-releases
       R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
     steps:
-      - name: Download Windows native Release
+      - name: Download Lee's Toolbox Windows Release
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.build-windows-native.outputs.public_tag }}
+          PUBLIC_TAG: ${{ needs.build-lees-toolbox-windows.outputs.public_tag }}
         run: |
           set -euo pipefail
           mkdir assets
           gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
-          test -s assets/latest-windows-native.json
+          test -s assets/latest-lees-toolbox-windows.json
 
-      - name: Mirror Windows native release to R2
+      - name: Mirror Lee's Toolbox Windows release to R2
         env:
-          VERSION: ${{ needs.build-windows-native.outputs.version }}
+          VERSION: ${{ needs.build-lees-toolbox-windows.outputs.version }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
           set -euo pipefail
@@ -347,24 +350,24 @@ jobs:
           from urllib.parse import urlparse
 
           base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
-          path = Path("assets/latest-windows-native.json")
+          path = Path("assets/latest-lees-toolbox-windows.json")
           manifest = json.loads(path.read_text(encoding="utf-8"))
           installer = Path(urlparse(manifest["url"]).path).name
           manifest["url"] = f"{base}/{installer}"
           path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           print(installer)
           PY
-          installer="packing-list-toolkit_${VERSION}_windows-native-x64-setup.exe"
+          installer="lees-toolbox-windows_${VERSION}_x64-setup.exe"
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${installer}" --file "assets/${installer}" --remote
-          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-windows-native.json" --file assets/latest-windows-native.json --content-type "application/json; charset=utf-8" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-toolbox-windows.json" --file assets/latest-lees-toolbox-windows.json --content-type "application/json; charset=utf-8" --remote
           python3 - "$account_id" <<'PY'
           import json, os, sys, urllib.parse, urllib.request
 
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"].strip()
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-          current = f"packing-list-toolkit_{os.environ['VERSION']}_windows-native-x64-setup.exe"
-          prefix = "packing-list-toolkit_"
+          current = f"lees-toolbox-windows_{os.environ['VERSION']}_x64-setup.exe"
+          prefix = "lees-toolbox-windows_"
 
           def request(method, path, params=None):
               url = f"https://api.cloudflare.com/client/v4{path}"
@@ -387,7 +390,7 @@ jobs:
               data = request("GET", bucket_path, params)
               for obj in data.get("result") or []:
                   key = obj.get("key", "")
-                  if key.endswith("_windows-native-x64-setup.exe") and key != current:
+                  if key.endswith("_x64-setup.exe") and key != current:
                       stale.append(key)
               info = data.get("result_info") or {}
               if not info.get("is_truncated"):
@@ -397,8 +400,8 @@ jobs:
                   raise SystemExit("R2 listing was truncated without a cursor")
           for key in stale:
               request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
-              print(f"Deleted old Windows native mirror: {key}")
+              print(f"Deleted old Lee's Toolbox Windows mirror: {key}")
           PY
-          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-windows-native.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]; assert data.get("platform") == "windows-x86_64-native"; assert data.get("sha256") and data.get("certificateThumbprint")'
-          echo "R2 Windows native mirror complete"
+          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-toolbox-windows.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]; assert data.get("platform") == "windows-x86_64"; assert data.get("sha256") and data.get("certificateThumbprint")'
+          echo "R2 Lee's Toolbox Windows mirror complete"
