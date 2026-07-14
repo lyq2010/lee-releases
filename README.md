@@ -7,7 +7,7 @@
 | 系统 | 下载入口 | 安装文件 |
 |---|---|---|
 | Windows x64 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
-| Windows 11 x64 原生版 | [Lee's Toolbox Windows](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases) | `lees-toolbox-windows_*_x64-setup.exe` |
+| Windows 11 x64 原生版 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases) | `lees-toolbox-windows_*_x64-setup.exe` |
 | macOS Apple Silicon | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
 | macOS Apple Silicon 原生版 | [最新稳定版](https://github.com/lyq2010/building-panel-dept-toolkit-releases/releases/tag/native-v3.0.6) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
 
