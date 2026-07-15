@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Lee’s Toolbox Mac 源码 tag（如 v3.0.6）"
+        description: "Lee’s Toolbox Mac 源码 tag（如 v3.0.7）"
         required: true
         type: string
       publish:
