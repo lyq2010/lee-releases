@@ -395,17 +395,23 @@ jobs:
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           package = Path(urlparse(manifest["url"]).path).name
           package_path = Path("assets") / package
+          msix_package = manifest["msixPackage"]
+          msix_path = Path("assets") / msix_package
           if not package_path.is_file():
               sys.exit(f"Missing Lee's Mail package: {package_path}")
+          if not msix_path.is_file():
+              sys.exit(f"Missing Lee's Mail MSIX: {msix_path}")
           actual_hash = hashlib.sha256(package_path.read_bytes()).hexdigest().upper()
           if actual_hash != manifest["sha256"].upper() or package_path.stat().st_size != manifest["size"]:
               sys.exit("Lee's Mail package hash or size mismatch")
           client.upload_file(Bucket=bucket, LocalFilePath=str(package_path), Key=key(package), EnableMD5=False)
+          client.upload_file(Bucket=bucket, LocalFilePath=str(msix_path), Key=key(msix_package), EnableMD5=False)
           manifest["url"] = f"{base}/{package}"
           body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
           client.put_object(Bucket=bucket, Body=body, Key=key("latest-lees-mail.json"), ContentType="application/json; charset=utf-8")
 
           current_key = key(package)
+          current_msix_key = key(msix_package)
           marker = ""
           while True:
               kwargs = {"Bucket": bucket, "Prefix": key("LeesMail_"), "MaxKeys": 1000}
@@ -414,7 +420,9 @@ jobs:
               listed = client.list_objects(**kwargs)
               for obj in listed.get("Contents", []) or []:
                   obj_key = obj.get("Key", "")
-                  if obj_key.endswith("_x64-setup.exe") and obj_key != current_key:
+                  is_old_setup = obj_key.endswith("_x64-setup.exe") and obj_key != current_key
+                  is_old_msix = obj_key.endswith("_x64.msix") and obj_key != current_msix_key
+                  if is_old_setup or is_old_msix:
                       client.delete_object(Bucket=bucket, Key=obj_key)
                       print(f"Deleted old Lee's Mail mirror: {obj_key}")
               if listed.get("IsTruncated") in ("true", True):
@@ -463,7 +471,7 @@ jobs:
             python3 -c 'import json, sys; data=json.load(sys.stdin); accounts=data.get("result") or []; assert data.get("success") and accounts; print(accounts[0]["id"])'
           )"
           export CLOUDFLARE_ACCOUNT_ID="$account_id"
-          package="$(python3 - <<'PY'
+          mapfile -t packages < <(python3 - <<'PY'
           import json, os
           from pathlib import Path
           from urllib.parse import urlparse
@@ -475,15 +483,20 @@ jobs:
           manifest["url"] = f"{base}/{package}"
           path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           print(package)
+          print(manifest["msixPackage"])
           PY
-          )"
+          )
+          package="${packages[0]}"
+          msix_package="${packages[1]}"
           test -s "assets/${package}"
+          test -s "assets/${msix_package}"
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${package}" --file "assets/${package}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${msix_package}" --file "assets/${msix_package}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-mail.json" --file assets/latest-lees-mail.json --content-type "application/json; charset=utf-8" --remote
-          python3 - "$account_id" "$package" <<'PY'
+          python3 - "$account_id" "$package" "$msix_package" <<'PY'
           import json, os, sys, urllib.parse, urllib.request
 
-          account_id, current = sys.argv[1:3]
+          account_id, current_setup, current_msix = sys.argv[1:4]
           bucket = os.environ["R2_BUCKET"].strip()
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
           prefix = "LeesMail_"
@@ -509,7 +522,9 @@ jobs:
               data = request("GET", bucket_path, params)
               for obj in data.get("result") or []:
                   key = obj.get("key", "")
-                  if key.endswith("_x64-setup.exe") and key != current:
+                  is_old_setup = key.endswith("_x64-setup.exe") and key != current_setup
+                  is_old_msix = key.endswith("_x64.msix") and key != current_msix
+                  if is_old_setup or is_old_msix:
                       stale.append(key)
               info = data.get("result_info") or {}
               if not info.get("is_truncated"):
