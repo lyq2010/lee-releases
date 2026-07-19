@@ -49,6 +49,12 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
 
+      - name: Checkout public release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          persist-credentials: false
+
       - name: Create private source read token
         id: source-token
         uses: actions/create-github-app-token@v3
@@ -176,6 +182,8 @@ jobs:
       - name: Test Cloudflare tracking worker
         working-directory: source/tracking-worker
         shell: pwsh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
           pnpm install --frozen-lockfile
           pnpm run check
@@ -184,6 +192,54 @@ jobs:
         working-directory: source
         shell: pwsh
         run: ./scripts/build-private-msix.ps1 -NoRestore -AllowUntrustedForVerification -OutputDirectory artifacts/msix
+
+      - name: Build and verify Lee's Mail setup
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          PACKAGE_VERSION: ${{ steps.tags.outputs.package_version }}
+          CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
+        run: |
+          $package = @(Get-ChildItem -LiteralPath artifacts/msix -Recurse -File -Filter *.msix)
+          if ($package.Count -ne 1) { throw "Expected exactly one MSIX, found $($package.Count)" }
+
+          $inputDirectory = [IO.Path]::GetFullPath('artifacts/installer-input')
+          $outputDirectory = [IO.Path]::GetFullPath('artifacts/installer')
+          New-Item -ItemType Directory -Force $inputDirectory, $outputDirectory | Out-Null
+          Copy-Item -LiteralPath $package[0].FullName -Destination "$inputDirectory/LeesMail.msix" -Force
+          Export-Certificate -Cert "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT" -FilePath "$inputDirectory/LeesMail_CN-Lee.cer" -Force | Out-Null
+          Copy-Item -LiteralPath ../release-repo/release-tools/lees-mail-installer/InstallLeesMail.ps1 -Destination "$inputDirectory/InstallLeesMail.ps1" -Force
+
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $definition = [IO.Path]::GetFullPath('../release-repo/release-tools/lees-mail-installer/LeesMailInstaller.iss')
+          if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler is missing from the runner' }
+          & $compiler "/DAppVersion=$env:VERSION" "/DSourcePath=$inputDirectory" "/DOutputPath=$outputDirectory" $definition
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+          $setup = @(Get-ChildItem -LiteralPath $outputDirectory -File -Filter *.exe)
+          if ($setup.Count -ne 1) { throw "Expected exactly one setup executable, found $($setup.Count)" }
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -File |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (!$signTool) { throw 'SignTool is missing from the runner' }
+          & $signTool.FullName sign /fd SHA256 /sha1 $env:CERTIFICATE_THUMBPRINT /s My $setup[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "Setup signing failed with exit code $LASTEXITCODE" }
+          $setupSignature = Get-AuthenticodeSignature -LiteralPath $setup[0].FullName
+          if (!$setupSignature.SignerCertificate -or $setupSignature.SignerCertificate.Thumbprint -ne $env:CERTIFICATE_THUMBPRINT) {
+            throw "Setup signer does not match the configured Lee's Mail certificate"
+          }
+
+          $logPath = Join-Path $env:RUNNER_TEMP 'lees-mail-setup.log'
+          $process = Start-Process -FilePath $setup[0].FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$logPath" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 80 }
+            throw "Lee's Mail setup verification failed with exit code $($process.ExitCode)"
+          }
+          $installed = @(Get-AppxPackage -Name LeesMail | Where-Object { $_.Version -eq $env:PACKAGE_VERSION })
+          if ($installed.Count -ne 1) { throw "Lee's Mail setup did not install package version $env:PACKAGE_VERSION" }
+          $installed | Remove-AppxPackage
+          if (Get-AppxPackage -Name LeesMail) { throw "Lee's Mail setup verification package cleanup failed" }
 
       - name: Stage and verify release files
         id: package
@@ -204,10 +260,14 @@ jobs:
 
           $stage = 'release-stage'
           New-Item -ItemType Directory -Force $stage | Out-Null
-          $packageName = "LeesMail_${env:VERSION}_x64.msix"
+          $msixName = "LeesMail_${env:VERSION}_x64.msix"
+          $packageName = "LeesMail_${env:VERSION}_x64-setup.exe"
           $certificateName = 'LeesMail_CN-Lee.cer'
           $sourceName = "lees-mail_${env:VERSION}_source.zip"
-          Copy-Item -LiteralPath $package[0].FullName -Destination "$stage/$packageName" -Force
+          $installer = @(Get-ChildItem -LiteralPath artifacts/installer -File -Filter *.exe)
+          if ($installer.Count -ne 1) { throw "Expected exactly one setup executable, found $($installer.Count)" }
+          Copy-Item -LiteralPath $installer[0].FullName -Destination "$stage/$packageName" -Force
+          Copy-Item -LiteralPath $package[0].FullName -Destination "$stage/$msixName" -Force
           Export-Certificate -Cert "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT" -FilePath "$stage/$certificateName" -Force | Out-Null
           git archive --format=zip --output "$stage/$sourceName" $env:SOURCE_TAG
           if ($LASTEXITCODE -ne 0) { throw 'Source archive creation failed' }
@@ -223,6 +283,7 @@ jobs:
             sha256 = $hash
             size = $publishedPackage.Length
             certificateThumbprint = $env:CERTIFICATE_THUMBPRINT
+            msixPackage = $msixName
             sourceArchive = $sourceName
           }
           [IO.File]::WriteAllText(
@@ -233,7 +294,8 @@ jobs:
           $notes = @"
           # Lee's Mail $env:VERSION
 
-          Windows x64 build of Lee's Mail.
+          Windows x64 build of Lee's Mail. Run the signed setup executable; it installs
+          the embedded CN=Lee certificate and MSIX package in one guided operation.
 
           - SHA-256: ``$hash``
           - Signing certificate: ``$env:CERTIFICATE_THUMBPRINT``
@@ -269,6 +331,10 @@ jobs:
           }
           if (Test-Path -LiteralPath source/LeesMail.Private.props) {
             Remove-Item -LiteralPath source/LeesMail.Private.props -Force
+          }
+          Get-AppxPackage -Name LeesMail | Remove-AppxPackage -ErrorAction SilentlyContinue
+          if ($env:CERTIFICATE_THUMBPRINT -and (Test-Path "Cert:\LocalMachine\TrustedPeople\$env:CERTIFICATE_THUMBPRINT")) {
+            Remove-Item -LiteralPath "Cert:\LocalMachine\TrustedPeople\$env:CERTIFICATE_THUMBPRINT" -Force
           }
 
   cos-lees-mail-mirror:
@@ -341,7 +407,7 @@ jobs:
               listed = client.list_objects(**kwargs)
               for obj in listed.get("Contents", []) or []:
                   obj_key = obj.get("Key", "")
-                  if obj_key.endswith("_x64.msix") and obj_key != current_key:
+                  if obj_key.endswith("_x64-setup.exe") and obj_key != current_key:
                       client.delete_object(Bucket=bucket, Key=obj_key)
                       print(f"Deleted old Lee's Mail mirror: {obj_key}")
               if listed.get("IsTruncated") in ("true", True):
@@ -436,7 +502,7 @@ jobs:
               data = request("GET", bucket_path, params)
               for obj in data.get("result") or []:
                   key = obj.get("key", "")
-                  if key.endswith("_x64.msix") and key != current:
+                  if key.endswith("_x64-setup.exe") and key != current:
                       stale.append(key)
               info = data.get("result_info") or {}
               if not info.get("is_truncated"):
