@@ -84,6 +84,8 @@ jobs:
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('source/**/*.csproj', 'source/Directory.Packages.props', 'source/NuGet.Config') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
 
       - uses: actions/setup-node@v6
         with:
