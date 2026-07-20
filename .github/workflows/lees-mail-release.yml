@@ -100,12 +100,14 @@ jobs:
         env:
           OUTLOOK_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
           GMAIL_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           SIGNING_PFX_BASE64: ${{ secrets.LEESMAIL_SIGNING_PFX_BASE64 }}
           SIGNING_PFX_PASSWORD: ${{ secrets.LEESMAIL_SIGNING_PFX_PASSWORD }}
         run: |
           if ($env:OUTLOOK_CLIENT_ID -notmatch '^[0-9a-fA-F-]{36}$') { throw 'LEESMAIL_OUTLOOK_CLIENT_ID is missing or malformed' }
           if ($env:GMAIL_CLIENT_ID -notmatch '^[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'LEESMAIL_GMAIL_CLIENT_ID is missing or malformed' }
+          if ([string]::IsNullOrWhiteSpace($env:GMAIL_CLIENT_SECRET)) { throw 'LEESMAIL_GMAIL_CLIENT_SECRET is missing' }
           $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
           if (!$cosBase.Contains('://')) { $cosBase = "https://$cosBase" }
           $cosUri = $null
@@ -135,6 +137,7 @@ jobs:
         env:
           OUTLOOK_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
           GMAIL_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
         run: |
@@ -146,6 +149,7 @@ jobs:
             <PropertyGroup>
               <LeesMailOutlookClientId>$env:OUTLOOK_CLIENT_ID</LeesMailOutlookClientId>
               <LeesMailGmailClientId>$env:GMAIL_CLIENT_ID</LeesMailGmailClientId>
+              <LeesMailGmailClientSecret>$env:GMAIL_CLIENT_SECRET</LeesMailGmailClientSecret>
               <LeesMailCosUpdateManifestUrl>$cosManifest</LeesMailCosUpdateManifestUrl>
               <PackageCertificateThumbprint>$env:CERTIFICATE_THUMBPRINT</PackageCertificateThumbprint>
             </PropertyGroup>
@@ -226,10 +230,12 @@ jobs:
         shell: pwsh
         run: ./scripts/build-private-msix.ps1 -NoRestore -AllowUntrustedForVerification -OutputDirectory artifacts/msix
 
-      - name: Verify COS-first update channel is embedded
+      - name: Verify private configuration is embedded
         working-directory: source
         shell: pwsh
         env:
+          GMAIL_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
         run: |
           $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
@@ -240,6 +246,12 @@ jobs:
           $generatedSource = Get-Content -LiteralPath $assemblyInfo[0].FullName -Raw -Encoding UTF8
           if (!$generatedSource.Contains($expectedManifest, [StringComparison]::Ordinal)) {
             throw 'Signed build does not contain the configured COS update manifest URL'
+          }
+          if (!$generatedSource.Contains($env:GMAIL_CLIENT_ID, [StringComparison]::Ordinal)) {
+            throw 'Signed build does not contain the configured Google desktop client ID'
+          }
+          if (!$generatedSource.Contains($env:GMAIL_CLIENT_SECRET, [StringComparison]::Ordinal)) {
+            throw 'Signed build does not contain the configured Google desktop client secret'
           }
 
       - name: Build and verify Lee's Mail setup
