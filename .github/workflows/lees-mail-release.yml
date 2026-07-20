@@ -78,6 +78,13 @@ jobs:
         with:
           dotnet-version: 10.0.302
 
+      - name: Restore NuGet package cache
+        id: nuget-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('source/**/*.csproj', 'source/Directory.Packages.props', 'source/NuGet.Config') }}
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -151,12 +158,26 @@ jobs:
           DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
           MSBUILDDISABLENODEREUSE: "1"
         run: |
-          dotnet restore LeesMail.Core.Tests/LeesMail.Core.Tests.csproj --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64
-          if ($LASTEXITCODE -ne 0) { throw 'Core test restore failed' }
-          dotnet restore LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64
-          if ($LASTEXITCODE -ne 0) { throw 'ViewModel test restore failed' }
-          dotnet restore LeesMail.Mail.WinUI/LeesMail.Mail.WinUI.csproj --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 -p:RuntimeIdentifier=win-x64
-          if ($LASTEXITCODE -ne 0) { throw 'WinUI restore failed' }
+          function Invoke-RestoreWithRetry([string]$Project, [string[]]$ExtraArgs = @()) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              Write-Host "Restoring $Project (attempt $attempt of 3)"
+              & dotnet restore $Project --disable-parallel -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 @ExtraArgs
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -lt 3) { Start-Sleep -Seconds (15 * $attempt) }
+            }
+            throw "Restore failed after 3 attempts: $Project"
+          }
+
+          Invoke-RestoreWithRetry 'LeesMail.Core.Tests/LeesMail.Core.Tests.csproj'
+          Invoke-RestoreWithRetry 'LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj'
+          Invoke-RestoreWithRetry 'LeesMail.Mail.WinUI/LeesMail.Mail.WinUI.csproj' @('-p:RuntimeIdentifier=win-x64')
+
+      - name: Save NuGet package cache
+        if: steps.nuget-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('source/**/*.csproj', 'source/Directory.Packages.props', 'source/NuGet.Config') }}
 
       - name: Test Lee's Mail core
         working-directory: source
