@@ -80,7 +80,7 @@ jobs:
 
       - name: Restore NuGet package cache
         id: nuget-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('source/**/*.csproj', 'source/Directory.Packages.props', 'source/NuGet.Config') }}
@@ -190,7 +190,7 @@ jobs:
 
       - name: Save NuGet package cache
         if: steps.nuget-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('source/**/*.csproj', 'source/Directory.Packages.props', 'source/NuGet.Config') }}
