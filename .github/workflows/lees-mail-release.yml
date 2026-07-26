@@ -341,7 +341,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Source archive creation failed' }
 
           $publishedPackage = Get-Item -LiteralPath "$stage/$packageName"
+          $publishedMsix = Get-Item -LiteralPath "$stage/$msixName"
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publishedPackage.FullName).Hash
+          $msixHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publishedMsix.FullName).Hash
           $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
           $manifest = [ordered]@{
             version = $env:VERSION
@@ -352,6 +354,8 @@ jobs:
             size = $publishedPackage.Length
             certificateThumbprint = $env:CERTIFICATE_THUMBPRINT
             msixPackage = $msixName
+            msixSha256 = $msixHash
+            msixSize = $publishedMsix.Length
             sourceArchive = $sourceName
           }
           [IO.File]::WriteAllText(
@@ -367,7 +371,8 @@ jobs:
           - 修复了一些问题。
           - 运行已签名的安装程序即可安装证书和 MSIX 软件包。
 
-          - SHA-256: ``$hash``
+          - 安装程序 SHA-256: ``$hash``
+          - MSIX SHA-256: ``$msixHash``
           - 签名证书: ``$env:CERTIFICATE_THUMBPRINT``
           - 已附带对应的 GPL-3.0 源码归档。
           "@
@@ -467,6 +472,9 @@ jobs:
           actual_hash = hashlib.sha256(package_path.read_bytes()).hexdigest().upper()
           if actual_hash != manifest["sha256"].upper() or package_path.stat().st_size != manifest["size"]:
               sys.exit("Lee's Mail package hash or size mismatch")
+          actual_msix_hash = hashlib.sha256(msix_path.read_bytes()).hexdigest().upper()
+          if actual_msix_hash != manifest["msixSha256"].upper() or msix_path.stat().st_size != manifest["msixSize"]:
+              sys.exit("Lee's Mail MSIX hash or size mismatch")
           client.upload_file(Bucket=bucket, LocalFilePath=str(package_path), Key=key(package), EnableMD5=False)
           client.upload_file(Bucket=bucket, LocalFilePath=str(msix_path), Key=key(msix_package), EnableMD5=False)
           manifest["url"] = f"{base}/{package}"
@@ -498,7 +506,14 @@ jobs:
               published = json.loads(response.read().decode("utf-8"))
           if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64":
               sys.exit("COS latest-lees-mail.json mismatch")
-          if published.get("sha256") != actual_hash or not published.get("certificateThumbprint"):
+          if (
+              published.get("sha256") != actual_hash
+              or published.get("size") != package_path.stat().st_size
+              or published.get("msixPackage") != msix_package
+              or published.get("msixSha256") != actual_msix_hash
+              or published.get("msixSize") != msix_path.stat().st_size
+              or not published.get("certificateThumbprint")
+          ):
               sys.exit("COS Lee's Mail integrity fields mismatch")
           print("COS Lee's Mail mirror complete")
           PY
@@ -535,7 +550,7 @@ jobs:
           )"
           export CLOUDFLARE_ACCOUNT_ID="$account_id"
           mapfile -t packages < <(python3 - <<'PY'
-          import json, os
+          import hashlib, json, os
           from pathlib import Path
           from urllib.parse import urlparse
 
@@ -543,10 +558,25 @@ jobs:
           path = Path("assets/latest-lees-mail.json")
           manifest = json.loads(path.read_text(encoding="utf-8"))
           package = Path(urlparse(manifest["url"]).path).name
+          package_path = Path("assets") / package
+          msix_package = manifest["msixPackage"]
+          msix_path = Path("assets") / msix_package
+          if not package_path.is_file() or not msix_path.is_file():
+              raise SystemExit("Lee's Mail release assets are incomplete")
+          if (
+              hashlib.sha256(package_path.read_bytes()).hexdigest().upper() != manifest["sha256"].upper()
+              or package_path.stat().st_size != manifest["size"]
+          ):
+              raise SystemExit("Lee's Mail package hash or size mismatch")
+          if (
+              hashlib.sha256(msix_path.read_bytes()).hexdigest().upper() != manifest["msixSha256"].upper()
+              or msix_path.stat().st_size != manifest["msixSize"]
+          ):
+              raise SystemExit("Lee's Mail MSIX hash or size mismatch")
           manifest["url"] = f"{base}/{package}"
           path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           print(package)
-          print(manifest["msixPackage"])
+          print(msix_package)
           PY
           )
           package="${packages[0]}"
@@ -600,5 +630,5 @@ jobs:
               print(f"Deleted old Lee's Mail mirror: {key}")
           PY
           curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-mail.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]; assert data.get("platform") == "windows-x86_64"; assert data.get("sha256") and data.get("certificateThumbprint")'
+            python3 -c 'import json, sys; data=json.load(sys.stdin); expected=json.load(open("assets/latest-lees-mail.json", encoding="utf-8")); fields=("version","platform","package","sha256","size","certificateThumbprint","msixPackage","msixSha256","msixSize"); assert all(data.get(field) == expected.get(field) for field in fields)'
           echo "R2 Lee's Mail mirror complete"
