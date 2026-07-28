@@ -166,6 +166,18 @@ jobs:
           [xml]$manifest = Get-Content -Raw -Encoding UTF8 LeesMail.Mail.WinUI/Package.appxmanifest
           $actual = [string]$manifest.Package.Identity.Version
           if ($actual -ne $env:PACKAGE_VERSION) { throw "Source package version mismatch: $actual != $env:PACKAGE_VERSION" }
+          if ([Version]$actual -ge [Version]'1.2.21.0') {
+            $requiredSources = @(
+              'LeesMail.LargeAttachments/LeesMail.LargeAttachments.csproj',
+              'large-attachment-web/package.json',
+              'tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj'
+            )
+            foreach ($requiredSource in $requiredSources) {
+              if (!(Test-Path -LiteralPath $requiredSource -PathType Leaf)) {
+                throw "Required large-attachment release source is missing: $requiredSource"
+              }
+            }
+          }
 
       - name: Restore .NET projects serially
         working-directory: source
@@ -186,6 +198,10 @@ jobs:
 
           Invoke-RestoreWithRetry 'LeesMail.Core.Tests/LeesMail.Core.Tests.csproj'
           Invoke-RestoreWithRetry 'LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj'
+          $e2eProject = 'tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj'
+          if (Test-Path -LiteralPath $e2eProject) {
+            Invoke-RestoreWithRetry $e2eProject
+          }
           Invoke-RestoreWithRetry 'LeesMail.Mail.WinUI/LeesMail.Mail.WinUI.csproj' @('-p:RuntimeIdentifier=win-x64')
 
       - name: Save NuGet package cache
@@ -210,6 +226,26 @@ jobs:
           DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
           MSBUILDDISABLENODEREUSE: "1"
         run: dotnet test LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 --logger "console;verbosity=minimal"
+
+      - name: Check translation resources
+        working-directory: source
+        shell: pwsh
+        run: python tools/prune_translation_resources.py --check
+
+      - name: Build large attachment E2E tool (offline)
+        if: ${{ hashFiles('source/tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj') != '' }}
+        working-directory: source
+        shell: pwsh
+        env:
+          DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
+          MSBUILDDISABLENODEREUSE: "1"
+        run: dotnet build tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64
+
+      - name: Test large attachment static downloader (offline)
+        if: ${{ hashFiles('source/large-attachment-web/package.json') != '' }}
+        working-directory: source
+        shell: pwsh
+        run: npm test --prefix large-attachment-web
 
       - name: Audit XAML automation IDs
         working-directory: source
@@ -363,12 +399,36 @@ jobs:
             ($manifest | ConvertTo-Json -Depth 3) + [Environment]::NewLine,
             [Text.UTF8Encoding]::new($false)
           )
+          $changelog = Get-Content -LiteralPath 'CHANGELOG.md' -Encoding UTF8
+          $heading = "## v$env:VERSION "
+          $start = -1
+          for ($index = 0; $index -lt $changelog.Count; $index++) {
+            if ($changelog[$index].StartsWith($heading, [StringComparison]::Ordinal)) {
+              $start = $index
+              break
+            }
+          }
+          if ($start -lt 0) { throw "CHANGELOG entry not found for v$env:VERSION" }
+          $end = $changelog.Count
+          for ($index = $start + 1; $index -lt $changelog.Count; $index++) {
+            if ($changelog[$index].StartsWith('## ', [StringComparison]::Ordinal)) {
+              $end = $index
+              break
+            }
+          }
+          $changeLines = @($changelog | Select-Object -Skip ($start + 1) -First ($end - $start - 1))
+          $releaseChanges = ($changeLines -join [Environment]::NewLine).Trim()
+          if ([string]::IsNullOrWhiteSpace($releaseChanges)) {
+            throw "CHANGELOG entry for v$env:VERSION has no release notes"
+          }
           $notes = @"
           # Lee's Mail $env:VERSION
 
           Lee's Mail Windows x64 正式版。
 
-          - 修复了一些问题。
+          ## 更新内容
+
+          $releaseChanges
           - 运行已签名的安装程序即可安装证书和 MSIX 软件包。
 
           - 安装程序 SHA-256: ``$hash``
