@@ -34,12 +34,14 @@ Lee 系列工具用于把分散的项目资料整理为结构统一、可以持�
 | macOS 通用版 | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
 | Lee’s Toolbox Mac | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
 | Lee's Mail | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail&expanded=true) | `LeesMail_*_x64-setup.exe` |
+| Lee’s Mail Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Mail%20Mac&expanded=true) | `Lees-Mail-*-arm64.dmg` |
 
 ### 怎么选择
 
 - 希望兼容现有稳定工作流，可选择 Windows 或 macOS 通用版。
 - 使用 Windows 11，希望获得原生界面、较快启动和较低后台占用，可选择 Lee's Toolbox Windows。
 - 使用 Apple Silicon Mac，希望使用 SwiftUI 原生界面和原生业务引擎，可选择 Lee’s Toolbox Mac。
+- 使用 Apple Silicon Mac，希望使用独立的原生邮件客户端，可选择 Lee’s Mail Mac。
 - 通用版与原生版使用独立的应用身份、数据目录和更新通道，可以并行安装。
 
 ## 安装
@@ -60,6 +62,10 @@ Release 仍附带原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对�
 1. 下载对应的 `.dmg`。
 2. 打开 DMG，将应用拖入「应用程序」。
 3. 如果系统阻止首次打开，请前往「系统设置 → 隐私与安全性」确认允许。
+
+Lee’s Mail Mac 与 Lee’s Toolbox Mac 一样使用 ad-hoc 应用签名，不申请 Developer ID，
+也不执行 Apple 公证。首次安装需要按上一步在系统设置中确认；后续应用内更新会同时
+校验 HTTPS 来源、文件大小、SHA-256 和内置公钥对应的 Minisign 签名。
 
 ## 快速开始
 

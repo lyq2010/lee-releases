@@ -1,0 +1,449 @@
+name: Lee’s Mail Mac Release
+
+on:
+  push:
+    tags: ["lees-mail-mac-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Lee’s Mail Mac 私有源码 tag（如 v1.0.0）"
+        required: true
+        type: string
+      publish:
+        description: "创建公开 Release 并镜像到 COS/R2"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lees-mail-mac-release-${{ github.ref }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO_NAME: ${{ vars.LEES_MAIL_MAC_SOURCE_REPO_NAME || 'lees-mail-mac' }}
+  SOURCE_REPO: ${{ format('lyq2010/{0}', vars.LEES_MAIL_MAC_SOURCE_REPO_NAME || 'lees-mail-mac') }}
+  R2_BUCKET: packing-list-releases
+  R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+  TRACKING_SERVICE_URL: https://lees-mail-tracking.leenbsl.workers.dev/
+
+jobs:
+  build-macos:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    outputs:
+      source_tag: ${{ steps.tags.outputs.source_tag }}
+      public_tag: ${{ steps.tags.outputs.public_tag }}
+      version: ${{ steps.tags.outputs.version }}
+    steps:
+      - name: Resolve and validate tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            source_tag="${{ inputs.tag }}"
+            public_tag="lees-mail-mac-${source_tag}"
+          else
+            public_tag="$GITHUB_REF_NAME"
+            source_tag="${public_tag#lees-mail-mac-}"
+          fi
+          [[ "$source_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$public_tag" == "lees-mail-mac-${source_tag}" ]]
+          echo "source_tag=$source_tag" | tee -a "$GITHUB_OUTPUT"
+          echo "public_tag=$public_tag" | tee -a "$GITHUB_OUTPUT"
+          echo "version=${source_tag#v}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Create private source read token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: ${{ env.SOURCE_REPO_NAME }}
+          permission-contents: read
+
+      - name: Checkout Lee’s Mail Mac source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ steps.tags.outputs.source_tag }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Verify Xcode and macOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          swift --version
+          sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+          test "$(xcodebuild -version | sed -n 's/^Xcode //p')" = "26.6"
+          test "$sdk_version" = "26.5"
+
+      - name: Validate release configuration
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          [[ "$GOOGLE_CLIENT_ID" =~ ^[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$ ]]
+          test -n "$GOOGLE_CLIENT_SECRET"
+          [[ "$MICROSOFT_CLIENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme != "https" or not parsed.netloc:
+              raise SystemExit("COS_PUBLIC_BASE_URL is missing or malformed")
+          PY
+
+      - name: Test source
+        working-directory: source
+        run: swift test
+
+      - name: Run malformed MIME corpus with Address Sanitizer
+        working-directory: source
+        run: swift test --sanitize address --filter MalformedMIMECorpusTests
+
+      - name: Create private build configuration
+        working-directory: source
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from pathlib import Path
+
+          cos = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in cos:
+              cos = f"https://{cos}"
+          r2 = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
+          configuration = {
+              "GoogleClientID": os.environ["GOOGLE_CLIENT_ID"].strip(),
+              "GoogleClientSecret": os.environ["GOOGLE_CLIENT_SECRET"].strip(),
+              "GoogleRedirectURI": "http://localhost",
+              "MicrosoftClientID": os.environ["MICROSOFT_CLIENT_ID"].strip(),
+              "MicrosoftRedirectURI": "http://localhost",
+              "TrackingServiceURL": os.environ["TRACKING_SERVICE_URL"].strip(),
+              "UpdateManifestURLs": [
+                  f"{cos}/latest-lees-mail-mac.json",
+                  f"{r2}/latest-lees-mail-mac.json",
+              ],
+          }
+          path = Path("Config/LocalConfiguration.plist")
+          path.write_bytes(plistlib.dumps(configuration, fmt=plistlib.FMT_XML))
+          path.chmod(0o600)
+          PY
+
+      - name: Package ad-hoc signed app and DMG
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: ./scripts/package-dmg.sh "$VERSION" "$GITHUB_RUN_NUMBER" "" production
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+
+      - name: Sign DMG for automatic updates
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          dmg="dist/Lees-Mail-${VERSION}-arm64.dmg"
+          npm exec --yes --package @tauri-apps/cli@2.11.2 -- tauri signer sign "$dmg"
+          test -s "$dmg.sig"
+          python3 - "$dmg.sig" "$dmg.minisig" <<'PY'
+          import base64
+          import sys
+          from pathlib import Path
+
+          encoded = Path(sys.argv[1]).read_text(encoding="utf-8").strip()
+          try:
+              signature = base64.b64decode(encoded, validate=True).decode("utf-8").strip()
+          except Exception as exc:
+              raise SystemExit(f"DMG signature is invalid: {exc}") from exc
+          if len(signature.splitlines()) != 4 or not signature.startswith("untrusted comment:"):
+              raise SystemExit("Decoded DMG signature is not a Minisign signature")
+          Path(sys.argv[2]).write_text(signature + "\n", encoding="utf-8")
+          PY
+
+      - name: Generate native update manifest
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          dmg="dist/Lees-Mail-${VERSION}-arm64.dmg"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${PUBLIC_TAG}"
+          ./scripts/generate-update-manifest.sh \
+            "$dmg" \
+            "$VERSION" \
+            "$base/Lees-Mail-${VERSION}-arm64.dmg" \
+            "$base/Lees-Mail-${VERSION}-arm64.dmg.minisig" \
+            dist/latest-lees-mail-mac.json
+
+      - name: Verify package and embedded configuration
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          GOOGLE_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          app="dist/Lee’s Mail-${VERSION}.app"
+          binary="$app/Contents/MacOS/LeesMail"
+          configuration="$app/Contents/Resources/LocalConfiguration.plist"
+          dmg="dist/Lees-Mail-${VERSION}-arm64.dmg"
+          signature="$dmg.minisig"
+          manifest="dist/latest-lees-mail-mac.json"
+          test -x "$binary"
+          test -s "$configuration"
+          test -s "$dmg"
+          test -s "$signature"
+          test -s "$manifest"
+          test "$(/usr/bin/lipo -archs "$binary")" = "arm64"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+          python3 - "$configuration" "$manifest" "$dmg" "$signature" <<'PY'
+          import hashlib
+          import json
+          import os
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          configuration = plistlib.loads(Path(sys.argv[1]).read_bytes())
+          manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+          dmg = Path(sys.argv[3])
+          signature = Path(sys.argv[4]).read_text(encoding="utf-8").strip()
+          cos = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in cos:
+              cos = f"https://{cos}"
+          assert configuration["GoogleClientID"] == os.environ["GOOGLE_CLIENT_ID"]
+          assert configuration["GoogleClientSecret"] == os.environ["GOOGLE_CLIENT_SECRET"]
+          assert configuration["MicrosoftClientID"] == os.environ["MICROSOFT_CLIENT_ID"]
+          assert configuration["UpdateManifestURLs"] == [
+              f"{cos}/latest-lees-mail-mac.json",
+              f"{os.environ['R2_PUBLIC_BASE_URL'].rstrip('/')}/latest-lees-mail-mac.json",
+          ]
+          assert manifest["version"] == os.environ["VERSION"]
+          assert manifest["architecture"] == "arm64"
+          assert manifest["sha256"] == hashlib.sha256(dmg.read_bytes()).hexdigest()
+          assert manifest["downloadSize"] == dmg.stat().st_size
+          assert manifest["minisignSignatureURL"].endswith(".dmg.minisig")
+          assert len(signature.splitlines()) == 4
+          PY
+
+      - name: Stage public release
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir release-stage
+          cp "dist/Lees-Mail-${VERSION}-arm64.dmg" release-stage/
+          cp "dist/Lees-Mail-${VERSION}-arm64.dmg.minisig" release-stage/
+          cp dist/latest-lees-mail-mac.json release-stage/
+
+      - name: Create draft Release
+        if: github.event_name == 'push' || inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tags.outputs.public_tag }}
+          name: Lee’s Mail Mac ${{ steps.tags.outputs.version }}
+          draft: true
+          make_latest: false
+          files: source/release-stage/*
+          body: |
+            Lee’s Mail Mac ${{ steps.tags.outputs.version }}
+
+            Apple Silicon、macOS 15 或更高版本。首次打开若被系统阻止，请在“系统设置 → 隐私与安全性”中确认允许。
+
+      - name: Verify and publish Release
+        if: github.event_name == 'push' || inputs.publish
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir release-verify
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir release-verify
+          for file in \
+            "Lees-Mail-${VERSION}-arm64.dmg" \
+            "Lees-Mail-${VERSION}-arm64.dmg.minisig" \
+            latest-lees-mail-mac.json
+          do
+            test -s "release-verify/$file"
+            cmp "release-stage/$file" "release-verify/$file"
+          done
+          gh release edit "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  cos-mirror:
+    needs: build-macos
+    if: ${{ needs.build-macos.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-macos.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-mail-mac.json
+
+      - name: Mirror release to COS
+        env:
+          VERSION: ${{ needs.build-macos.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user cos-python-sdk-v5
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from qcloud_cos import CosConfig, CosS3Client
+
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme != "https" or not parsed.netloc:
+              sys.exit("COS_PUBLIC_BASE_URL is invalid")
+          prefix = parsed.path.strip("/")
+          key = lambda name: f"{prefix}/{name}" if prefix else name
+          client = CosS3Client(CosConfig(
+              Region=os.environ["TENCENT_COS_REGION"].strip(),
+              SecretId=os.environ["TENCENT_COS_SECRET_ID"].strip(),
+              SecretKey=os.environ["TENCENT_COS_SECRET_KEY"].strip(),
+              Scheme="https",
+          ))
+          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
+          version = os.environ["VERSION"]
+          dmg = f"Lees-Mail-{version}-arm64.dmg"
+          signature = f"{dmg}.minisig"
+          for name in (dmg, signature):
+              path = Path("assets") / name
+              if not path.is_file():
+                  sys.exit(f"Missing release asset: {path}")
+              client.upload_file(
+                  Bucket=bucket,
+                  LocalFilePath=str(path),
+                  Key=key(name),
+                  EnableMD5=False,
+              )
+          manifest = json.loads(Path("assets/latest-lees-mail-mac.json").read_text(encoding="utf-8"))
+          manifest["downloadURL"] = f"{base}/{dmg}"
+          manifest["minisignSignatureURL"] = f"{base}/{signature}"
+          body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+          client.put_object(
+              Bucket=bucket,
+              Body=body,
+              Key=key("latest-lees-mail-mac.json"),
+              ContentType="application/json; charset=utf-8",
+          )
+          with urllib.request.urlopen(
+              f"{base}/latest-lees-mail-mac.json?verify={os.environ['GITHUB_RUN_ID']}",
+              timeout=30,
+          ) as response:
+              published = json.loads(response.read().decode("utf-8"))
+          if published.get("version") != version:
+              sys.exit("COS update manifest version mismatch")
+          if not published.get("minisignSignatureURL", "").endswith(".minisig"):
+              sys.exit("COS update signature URL is missing")
+          PY
+
+  r2-mirror:
+    needs: build-macos
+    if: ${{ needs.build-macos.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-macos.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-mail-mac.json
+
+      - name: Mirror release to R2
+        env:
+          VERSION: ${{ needs.build-macos.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          account_id="$(
+            curl -fsS \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.cloudflare.com/client/v4/accounts |
+            python3 -c 'import json, sys; data=json.load(sys.stdin); accounts=data.get("result") or []; assert data.get("success") and accounts; print(accounts[0]["id"])'
+          )"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
+          version = os.environ["VERSION"]
+          dmg = f"Lees-Mail-{version}-arm64.dmg"
+          signature = f"{dmg}.minisig"
+          manifest_path = Path("assets/latest-lees-mail-mac.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          manifest["downloadURL"] = f"{base}/{dmg}"
+          manifest["minisignSignatureURL"] = f"{base}/{signature}"
+          manifest_path.write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          dmg="Lees-Mail-${VERSION}-arm64.dmg"
+          signature="${dmg}.minisig"
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${signature}" --file "assets/${signature}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-mail-mac.json" --file assets/latest-lees-mail-mac.json --content-type "application/json; charset=utf-8" --remote
+          curl -fsS -H "Cache-Control: no-cache" \
+            "${R2_PUBLIC_BASE_URL}/latest-lees-mail-mac.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]; assert data.get("minisignSignatureURL", "").endswith(".minisig")'
