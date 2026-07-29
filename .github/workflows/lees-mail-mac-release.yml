@@ -277,6 +277,41 @@ jobs:
           cp "dist/Lees-Mail-${VERSION}-arm64.dmg.minisig" release-stage/
           cp dist/latest-lees-mail-mac.json release-stage/
 
+      - name: Prepare release notes
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - "$VERSION" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          heading = re.compile(rf"^## \[{re.escape(version)}\](?:\s+-\s+.*)?$")
+          start = next((index + 1 for index, line in enumerate(changelog) if heading.match(line)), None)
+          if start is None:
+              raise SystemExit(f"CHANGELOG.md 缺少版本 {version} 的条目")
+          end = next(
+              (index for index in range(start, len(changelog)) if changelog[index].startswith("## [")),
+              len(changelog),
+          )
+          notes = "\n".join(changelog[start:end]).strip()
+          if not notes:
+              raise SystemExit(f"CHANGELOG.md 的版本 {version} 没有更新内容")
+          body = (
+              "## 更新内容\n\n"
+              f"{notes}\n\n"
+              "## 系统要求\n\n"
+              "- Apple Silicon\n"
+              "- macOS 15 或更高版本\n\n"
+              "首次打开若被系统阻止，请在“系统设置 → 隐私与安全性”中确认允许。\n"
+          )
+          Path("release-notes.md").write_text(body, encoding="utf-8")
+          PY
+
       - name: Create draft Release
         if: github.event_name == 'push' || inputs.publish
         uses: softprops/action-gh-release@v3
@@ -286,10 +321,7 @@ jobs:
           draft: true
           make_latest: false
           files: source/release-stage/*
-          body: |
-            Lee’s Mail Mac ${{ steps.tags.outputs.version }}
-
-            Apple Silicon、macOS 15 或更高版本。首次打开若被系统阻止，请在“系统设置 → 隐私与安全性”中确认允许。
+          body_path: source/release-notes.md
 
       - name: Verify and publish Release
         if: github.event_name == 'push' || inputs.publish
