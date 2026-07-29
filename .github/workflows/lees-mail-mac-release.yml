@@ -218,20 +218,24 @@ jobs:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
         run: |
           set -euo pipefail
-          app="dist/Lee’s Mail-${VERSION}.app"
+          app="dist/Lee’s Mail.app"
           binary="$app/Contents/MacOS/LeesMail"
+          icon="$app/Contents/Resources/LeesMail.icns"
           configuration="$app/Contents/Resources/LocalConfiguration.plist"
           dmg="dist/Lees-Mail-${VERSION}-arm64.dmg"
           signature="$dmg.minisig"
           manifest="dist/latest-lees-mail-mac.json"
           test -x "$binary"
+          test -s "$icon"
           test -s "$configuration"
           test -s "$dmg"
           test -s "$signature"
           test -s "$manifest"
           test "$(/usr/bin/lipo -archs "$binary")" = "arm64"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")" = "LeesMail"
           /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+          ./scripts/verify-dmg-layout.sh "$dmg"
           python3 - "$configuration" "$manifest" "$dmg" "$signature" <<'PY'
           import hashlib
           import json
