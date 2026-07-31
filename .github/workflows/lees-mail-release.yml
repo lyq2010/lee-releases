@@ -1,14 +1,23 @@
 name: Lee's Mail Windows Release
 
 on:
-  push:
-    tags: ["lees-mail-v*"]
   workflow_dispatch:
     inputs:
       tag:
         description: "Lee's Mail private source tag (for example v1.0.0)"
         required: true
         type: string
+      store_package_version:
+        description: "Partner Center package version from the same source tag (for example 1.0.0.0)"
+        required: true
+        type: string
+      store_state:
+        description: "Current state of the matching Microsoft Store submission"
+        required: true
+        type: choice
+        options:
+          - published_or_scheduled
+          - parallel_authorized
 
 permissions:
   contents: read
@@ -28,26 +37,31 @@ jobs:
       source_tag: ${{ steps.tags.outputs.source_tag }}
       public_tag: ${{ steps.tags.outputs.public_tag }}
       version: ${{ steps.tags.outputs.version }}
+      store_state: ${{ steps.tags.outputs.store_state }}
     steps:
       - name: Resolve and validate tags
         id: tags
         shell: pwsh
         run: |
-          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            $sourceTag = '${{ inputs.tag }}'
-            $publicTag = "lees-mail-$sourceTag"
-          } else {
-            $publicTag = '${{ github.ref_name }}'
-            $sourceTag = $publicTag -replace '^lees-mail-', ''
-          }
+          $sourceTag = '${{ inputs.tag }}'
+          $publicTag = "lees-mail-$sourceTag"
           if ($sourceTag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid source tag: $sourceTag" }
           if ($publicTag -ne "lees-mail-$sourceTag") { throw "Invalid public tag: $publicTag" }
           $version = $sourceTag.Substring(1)
           $packageVersion = if ($version.Split('.').Length -eq 3) { "$version.0" } else { $version }
+          $storePackageVersion = '${{ inputs.store_package_version }}'.Trim()
+          if ($storePackageVersion -ne $packageVersion) {
+            throw "Store package version $storePackageVersion does not match source package version $packageVersion"
+          }
+          $storeState = '${{ inputs.store_state }}'
+          if ($storeState -notin @('published_or_scheduled', 'parallel_authorized')) {
+            throw "Invalid Store submission state: $storeState"
+          }
           "source_tag=$sourceTag" >> $env:GITHUB_OUTPUT
           "public_tag=$publicTag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
+          "store_state=$storeState" >> $env:GITHUB_OUTPUT
 
       - name: Checkout public release tooling
         uses: actions/checkout@v7
@@ -260,6 +274,25 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm run check
+          $config = Get-Content -LiteralPath wrangler.jsonc -Raw -Encoding UTF8 | ConvertFrom-Json
+          $declaredRequiredSecrets = @($config.secrets.required)
+          $expectedSecrets = @('ADMIN_TOKEN', 'TRANSLATION_ACCESS_TOKEN')
+          foreach ($secretName in $expectedSecrets) {
+            if ($secretName -notin $declaredRequiredSecrets) {
+              throw "wrangler.jsonc does not require Worker secret $secretName"
+            }
+          }
+          $liveSecretsJson = pnpm exec wrangler secret list --format json
+          if ($LASTEXITCODE -ne 0) { throw "wrangler secret list failed with exit code $LASTEXITCODE" }
+          $liveSecrets = @($liveSecretsJson | ConvertFrom-Json)
+          $liveSecretNames = @($liveSecrets | ForEach-Object { if ($_.name) { $_.name } else { $_.Name } })
+          foreach ($secretName in $expectedSecrets) {
+            if ($secretName -notin $liveSecretNames) {
+              throw "Deployed Worker is missing required secret $secretName"
+            }
+          }
+          pnpm exec wrangler deploy --dry-run --outdir "$env:RUNNER_TEMP/lees-mail-worker-dry-run"
+          if ($LASTEXITCODE -ne 0) { throw "wrangler deploy --dry-run failed with exit code $LASTEXITCODE" }
 
       - name: Build signed Lee's Mail MSIX
         working-directory: source
@@ -421,6 +454,11 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($releaseChanges)) {
             throw "CHANGELOG entry for v$env:VERSION has no release notes"
           }
+          $storeStateDescription = if ('${{ steps.tags.outputs.store_state }}' -eq 'published_or_scheduled') {
+            '已发布或已安排发布'
+          } else {
+            '已获授权与 GitHub 并行发布；认证结果单独跟踪'
+          }
           $notes = @"
           # Lee's Mail $env:VERSION
 
@@ -429,8 +467,10 @@ jobs:
           ## 安装渠道
 
           - 普通新用户：[Microsoft Store](https://apps.microsoft.com/detail/9NK93XCTM5R0)；若页面尚不可用，表示版本仍在 Microsoft 认证中。
+          - 本 Release 与 Microsoft Store 包版本 ``${{ steps.tags.outputs.package_version }}`` 来自同一源码标签；触发时 Store 状态：$storeStateDescription。
           - 既有自签名版用户继续使用本 Release 的 GitHub 直装包；Store 版使用独立身份，不能原地升级或自动迁移旧数据。
           - Store 专用 `.msixupload` 仅提交 Partner Center，不属于 GitHub Release 资产。
+          - Cloudflare 翻译访问密钥不包含在安装包、源码归档或 Release 资产中；仅授权用户可在应用的翻译设置中配置。
 
           ## 更新内容
 
