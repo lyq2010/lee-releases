@@ -426,9 +426,17 @@ jobs:
 
           Lee's Mail Windows x64 正式版。
 
+          ## 安装渠道
+
+          - 普通新用户：[Microsoft Store](https://apps.microsoft.com/detail/9NK93XCTM5R0)；若页面尚不可用，表示版本仍在 Microsoft 认证中。
+          - 既有自签名版用户继续使用本 Release 的 GitHub 直装包；Store 版使用独立身份，不能原地升级或自动迁移旧数据。
+          - Store 专用 `.msixupload` 仅提交 Partner Center，不属于 GitHub Release 资产。
+
           ## 更新内容
 
           $releaseChanges
+          ## GitHub 备用包
+
           - 运行已签名的安装程序即可安装证书和 MSIX 软件包。
 
           - 安装程序 SHA-256: ``$hash``
