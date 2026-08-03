@@ -160,7 +160,7 @@ jobs:
         working-directory: source
         env:
           VERSION: ${{ steps.tags.outputs.version }}
-        run: ./scripts/package-dmg.sh "$VERSION" "$GITHUB_RUN_NUMBER" "" production
+        run: ./scripts/package-dmg.sh "$VERSION" "" production
 
       - uses: actions/setup-node@v6
         with:
@@ -233,6 +233,7 @@ jobs:
           test -s "$manifest"
           test "$(/usr/bin/lipo -archs "$binary")" = "arm64"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")" = "LeesMail"
           /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
           ./scripts/verify-dmg-layout.sh "$dmg"
