@@ -121,6 +121,12 @@ jobs:
         working-directory: source
         run: swift test --sanitize address --filter MalformedMIMECorpusTests
 
+      - name: Test Rust bridge
+        working-directory: source
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/source/.build/pimalaya
+        run: cargo test --manifest-path Rust/PimalayaBridge/Cargo.toml --locked
+
       - name: Create private build configuration
         working-directory: source
         env:
@@ -418,6 +424,25 @@ jobs:
               Key=key("latest-lees-mail-mac.json"),
               ContentType="application/json; charset=utf-8",
           )
+
+          current_keys = {key(dmg), key(signature)}
+          marker = ""
+          while True:
+              kwargs = {"Bucket": bucket, "Prefix": key("Lees-Mail-"), "MaxKeys": 1000}
+              if marker:
+                  kwargs["Marker"] = marker
+              listed = client.list_objects(**kwargs)
+              for obj in listed.get("Contents", []) or []:
+                  obj_key = obj.get("Key", "")
+                  if obj_key.endswith((".dmg", ".dmg.minisig")) and obj_key not in current_keys:
+                      client.delete_object(Bucket=bucket, Key=obj_key)
+                      print(f"Deleted old Lee's Mail Mac mirror: {obj_key}")
+              if listed.get("IsTruncated") in ("true", True):
+                  marker = listed.get("NextMarker") or ""
+                  if marker:
+                      continue
+              break
+
           with urllib.request.urlopen(
               f"{base}/latest-lees-mail-mac.json?verify={os.environ['GITHUB_RUN_ID']}",
               timeout=30,
@@ -481,6 +506,52 @@ jobs:
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${signature}" --file "assets/${signature}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-mail-mac.json" --file assets/latest-lees-mail-mac.json --content-type "application/json; charset=utf-8" --remote
+          python3 - "$account_id" <<'PY'
+          import json, os, sys, urllib.parse, urllib.request
+
+          account_id = sys.argv[1]
+          bucket = os.environ["R2_BUCKET"].strip()
+          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          version = os.environ["VERSION"]
+          current = {
+              f"Lees-Mail-{version}-arm64.dmg",
+              f"Lees-Mail-{version}-arm64.dmg.minisig",
+          }
+          prefix = "Lees-Mail-"
+
+          def request(method, path, params=None):
+              url = f"https://api.cloudflare.com/client/v4{path}"
+              if params:
+                  url = f"{url}?{urllib.parse.urlencode(params)}"
+              req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+              if not data.get("success"):
+                  raise SystemExit(json.dumps(data, ensure_ascii=False))
+              return data
+
+          bucket_path = f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
+          cursor = ""
+          stale = []
+          while True:
+              params = {"prefix": prefix, "per_page": "1000"}
+              if cursor:
+                  params["cursor"] = cursor
+              data = request("GET", bucket_path, params)
+              for obj in data.get("result") or []:
+                  key = obj.get("key", "")
+                  if key.endswith((".dmg", ".dmg.minisig")) and key not in current:
+                      stale.append(key)
+              info = data.get("result_info") or {}
+              if not info.get("is_truncated"):
+                  break
+              cursor = info.get("cursor") or ""
+              if not cursor:
+                  raise SystemExit("R2 listing was truncated without a cursor")
+          for key in stale:
+              request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
+              print(f"Deleted old Lee's Mail Mac mirror: {key}")
+          PY
           curl -fsS -H "Cache-Control: no-cache" \
             "${R2_PUBLIC_BASE_URL}/latest-lees-mail-mac.json?verify=${GITHUB_RUN_ID}" |
             python3 -c 'import json, os, sys; data=json.load(sys.stdin); assert data.get("version") == os.environ["VERSION"]; assert data.get("minisignSignatureURL", "").endswith(".minisig")'
