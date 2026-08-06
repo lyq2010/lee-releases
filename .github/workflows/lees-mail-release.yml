@@ -103,7 +103,7 @@ jobs:
           if ($tagCommit -ne $checkoutCommit) {
             throw "Checked-out commit $checkoutCommit does not match source tag commit $tagCommit"
           }
-          git fetch --no-tags origin main
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to fetch source main before validating $env:SOURCE_TAG"
           }
