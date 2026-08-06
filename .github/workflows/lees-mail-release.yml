@@ -92,6 +92,26 @@ jobs:
           token: ${{ steps.source-token.outputs.token }}
           fetch-depth: 0
 
+      - name: Verify source tag is reachable from main
+        working-directory: source
+        shell: pwsh
+        env:
+          SOURCE_TAG: ${{ steps.tags.outputs.source_tag }}
+        run: |
+          $tagCommit = (git rev-parse "$env:SOURCE_TAG^{commit}").Trim()
+          $checkoutCommit = (git rev-parse HEAD).Trim()
+          if ($tagCommit -ne $checkoutCommit) {
+            throw "Checked-out commit $checkoutCommit does not match source tag commit $tagCommit"
+          }
+          git fetch --no-tags origin main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to fetch source main before validating $env:SOURCE_TAG"
+          }
+          git merge-base --is-ancestor $tagCommit origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Source tag $env:SOURCE_TAG is not reachable from origin/main"
+          }
+
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.302
@@ -597,6 +617,25 @@ jobs:
           body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
           client.put_object(Bucket=bucket, Body=body, Key=key("latest-lees-mail.json"), ContentType="application/json; charset=utf-8")
 
+          with urllib.request.urlopen(f"{base}/latest-lees-mail.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
+              published = json.loads(response.read().decode("utf-8"))
+          if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64":
+              sys.exit("COS latest-lees-mail.json mismatch")
+          if (
+              published.get("sha256") != actual_hash
+              or published.get("size") != package_path.stat().st_size
+              or published.get("msixPackage") != msix_package
+              or published.get("msixSha256") != actual_msix_hash
+              or published.get("msixSize") != msix_path.stat().st_size
+              or not published.get("certificateThumbprint")
+          ):
+              sys.exit("COS Lee's Mail integrity fields mismatch")
+          for public_url in (f"{base}/{package}", f"{base}/{msix_package}"):
+              request = urllib.request.Request(public_url, method="HEAD", headers={"Cache-Control": "no-cache"})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  if response.status != 200:
+                      sys.exit(f"COS Lee's Mail asset is not publicly available: {public_url}")
+
           current_key = key(package)
           current_msix_key = key(msix_package)
           marker = ""
@@ -618,19 +657,6 @@ jobs:
                       continue
               break
 
-          with urllib.request.urlopen(f"{base}/latest-lees-mail.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
-              published = json.loads(response.read().decode("utf-8"))
-          if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64":
-              sys.exit("COS latest-lees-mail.json mismatch")
-          if (
-              published.get("sha256") != actual_hash
-              or published.get("size") != package_path.stat().st_size
-              or published.get("msixPackage") != msix_package
-              or published.get("msixSha256") != actual_msix_hash
-              or published.get("msixSize") != msix_path.stat().st_size
-              or not published.get("certificateThumbprint")
-          ):
-              sys.exit("COS Lee's Mail integrity fields mismatch")
           print("COS Lee's Mail mirror complete")
           PY
 
@@ -702,6 +728,10 @@ jobs:
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${package}" --file "assets/${package}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${msix_package}" --file "assets/${msix_package}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-mail.json" --file assets/latest-lees-mail.json --content-type "application/json; charset=utf-8" --remote
+          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-mail.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json, sys; data=json.load(sys.stdin); expected=json.load(open("assets/latest-lees-mail.json", encoding="utf-8")); fields=("version","platform","package","sha256","size","certificateThumbprint","msixPackage","msixSha256","msixSize"); assert all(data.get(field) == expected.get(field) for field in fields)'
+          curl -fsSI -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/${package}?verify=${GITHUB_RUN_ID}" >/dev/null
+          curl -fsSI -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/${msix_package}?verify=${GITHUB_RUN_ID}" >/dev/null
           python3 - "$account_id" "$package" "$msix_package" <<'PY'
           import json, os, sys, urllib.parse, urllib.request
 
@@ -745,6 +775,4 @@ jobs:
               request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
               print(f"Deleted old Lee's Mail mirror: {key}")
           PY
-          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-mail.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json, sys; data=json.load(sys.stdin); expected=json.load(open("assets/latest-lees-mail.json", encoding="utf-8")); fields=("version","platform","package","sha256","size","certificateThumbprint","msixPackage","msixSha256","msixSize"); assert all(data.get(field) == expected.get(field) for field in fields)'
           echo "R2 Lee's Mail mirror complete"
