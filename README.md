@@ -33,7 +33,7 @@ Lee 系列工具用于把分散的项目资料整理为结构统一、可以持�
 | Lee's Toolbox Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E5%B7%A5%E5%85%B7%E7%AE%B1%20Windows&expanded=true) | `lees-toolbox-windows_*_x64-setup.exe` |
 | macOS 通用版 | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
 | Lee’s Toolbox Mac | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
-| Lee's Mail | Windows 11 22H2+ x64 | [Microsoft Store](https://apps.microsoft.com/detail/9NK93XCTM5R0) / [GitHub 备用包](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail&expanded=true) | Store 安装 / `LeesMail_*_x64-setup.exe` |
+| Lee's Mail | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail&expanded=true) | `LeesMail_*_x64-setup.exe` |
 | Lee’s Mail Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Mail%20Mac&expanded=true) | `Lees-Mail-*-arm64.dmg` |
 
 ### 怎么选择
@@ -52,14 +52,11 @@ Lee 系列工具用于把分散的项目资料整理为结构统一、可以持�
 2. 双击运行安装程序。
 3. 安装完成后，从开始菜单启动应用。
 
-Lee's Mail 面向新用户的首选入口是 [Microsoft Store](https://apps.microsoft.com/detail/9NK93XCTM5R0)；
-若商店页面尚不可用，表示该版本仍在 Microsoft 认证中。现有自签名版与 Store 版
-使用独立包身份，不能原地升级或自动迁移数据；既有用户应继续通过 GitHub 直装通道更新。
-
-GitHub 备用包下载 `LeesMail_*_x64-setup.exe` 后直接运行。安装器会请求管理员权限，
-把内置的 `CN=Lee` 证书导入本机“受信任人”，再安装内置 MSIX，无需手工导入证书。
-Release 仍附带原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，
-供离线校验与高级安装使用；Store 专用 `.msixupload` 不会发布到 GitHub。
+Lee's Mail 通过本仓库的 Release 安装和更新。下载 `LeesMail_*_x64-setup.exe` 后直接运行，
+安装器会请求管理员权限，把内置的 `CN=Lee` 证书导入本机“受信任人”，再安装内置 MSIX，
+无需手工导入证书。安装后由应用内更新提示后续版本。
+Release 同时附带原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，
+供离线校验与高级安装使用。
 
 ### macOS
 
