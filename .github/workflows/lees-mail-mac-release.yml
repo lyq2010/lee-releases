@@ -115,7 +115,11 @@ jobs:
 
       - name: Test source
         working-directory: source
-        run: swift test
+        # --no-parallel 不能省。并行时几十个加密数据库在同一个进程里同时活动，
+        # SQLCipher 的全局加密状态扛不住，约三成的概率在 sqlite3Codec 里解引用
+        # 空指针，整个测试进程带着 signal 11 挂掉——报告里一条失败也没有，发版
+        # 就这么白白挂掉一次。串行同样跑满全部用例。
+        run: swift test --no-parallel
 
       - name: Run malformed MIME corpus with Address Sanitizer
         working-directory: source
