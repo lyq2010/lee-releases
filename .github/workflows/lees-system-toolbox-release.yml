@@ -171,7 +171,15 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           $installer = (Resolve-Path '${{ steps.package.outputs.installer }}').Path
-          $install = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          $diagnosticLog = Join-Path $env:TEMP 'lees-system-toolbox-install.log'
+          Remove-Item -LiteralPath $diagnosticLog -Force -ErrorAction SilentlyContinue
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
+          if (!$install.WaitForExit(120000)) {
+            Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $diagnosticLog) { Get-Content -LiteralPath $diagnosticLog -Encoding UTF8 }
+            throw 'Installer did not exit within 120 seconds'
+          }
+          if (Test-Path -LiteralPath $diagnosticLog) { Get-Content -LiteralPath $diagnosticLog -Encoding UTF8 }
           if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
           $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\LeesSystemToolbox'
           $location = (Get-ItemProperty -LiteralPath $key -ErrorAction Stop).InstallLocation
