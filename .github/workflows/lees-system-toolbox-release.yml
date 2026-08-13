@@ -270,7 +270,7 @@ jobs:
           Get-AppxPackage -Name com.lyq2010.lees-system-toolbox -ErrorAction SilentlyContinue |
             Remove-AppxPackage -ErrorAction SilentlyContinue
           Remove-Item -LiteralPath '${{ steps.certificate.outputs.path }}' -Force -ErrorAction SilentlyContinue
-          foreach ($storeName in @('Root', 'TrustedPublisher')) {
+          foreach ($storeName in @('TrustedPeople', 'Root', 'TrustedPublisher')) {
             $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'CurrentUser')
             try {
               $store.Open('ReadWrite')
