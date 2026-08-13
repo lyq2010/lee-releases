@@ -189,6 +189,16 @@ jobs:
           if (!(Get-AppxPackage -Name com.lyq2010.lees-system-toolbox -ErrorAction SilentlyContinue)) {
             throw 'Sparse package was not registered'
           }
+          # 文件齐全不代表应用能起来：缺少 MRT 资源索引时全部 XAML 资源加载不到，
+          # 应用一启动就以 0xC000027B 崩溃，而逐个检查文件是否存在完全看不出来。
+          $app = Start-Process -FilePath (Join-Path $location 'LeesSystemToolbox.exe') -PassThru
+          Start-Sleep -Seconds 20
+          $app.Refresh()
+          if ($app.HasExited) {
+            throw ('Application exited on startup with 0x{0:X8}' -f $app.ExitCode)
+          }
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
           $remove = Start-Process -FilePath (Join-Path $location 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
           if ($remove.ExitCode -ne 0) { throw "Uninstaller exited with $($remove.ExitCode)" }
           Start-Sleep -Seconds 2
