@@ -1,0 +1,430 @@
+name: Lee's System Toolbox Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "私有源码仓 tag（如 v0.1.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lees-system-toolbox-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-lees-system-toolbox:
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    env:
+      SOURCE_REPO: lyq2010/lees-system-toolbox
+      R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+      EXPECTED_CERTIFICATE_THUMBPRINT: 241F342C3400102834F2EF02864FA6E79446C694
+    outputs:
+      public_tag: ${{ steps.tags.outputs.public_tag }}
+      version: ${{ steps.tags.outputs.version }}
+    steps:
+      - name: Resolve and validate tags
+        id: tags
+        shell: pwsh
+        run: |
+          $sourceTag = '${{ inputs.tag }}'
+          if ($sourceTag -notmatch '^v\d+\.\d+\.\d+$') { throw "Invalid source tag: $sourceTag" }
+          $publicTag = "lees-system-toolbox-$sourceTag"
+          "source_tag=$sourceTag" >> $env:GITHUB_OUTPUT
+          "public_tag=$publicTag" >> $env:GITHUB_OUTPUT
+          "version=$($sourceTag.Substring(1))" >> $env:GITHUB_OUTPUT
+
+      - name: Create private source read token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: lees-system-toolbox
+          permission-contents: read
+
+      - name: Checkout private source tag
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ steps.tags.outputs.source_tag }}
+          fetch-depth: 0
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+
+      - name: Verify source tag and version
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Source tag is not reachable from main' }
+          [xml]$project = Get-Content -Raw -Encoding UTF8 src/LeesSystemToolbox.App/LeesSystemToolbox.App.csproj
+          $actual = [string](@($project.Project.PropertyGroup | Where-Object { $_.Version })[0].Version)
+          if ($actual -ne $env:VERSION) { throw "Source version mismatch: $actual != $env:VERSION" }
+          if (Test-Path -LiteralPath .github/workflows -PathType Container) {
+            $workflows = @(Get-ChildItem -LiteralPath .github/workflows -File | Where-Object { $_.Extension -in @('.yml', '.yaml') })
+            if ($workflows.Count -gt 0) { throw 'Private source repository must not contain Actions workflows' }
+          }
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.301
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Restore existing native signing certificate
+        id: certificate
+        shell: pwsh
+        env:
+          CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_NATIVE_CERTIFICATE_PFX_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PFX_BASE64)) {
+            throw 'WINDOWS_NATIVE_CERTIFICATE_PFX_BASE64 is missing'
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'lees-system-toolbox-signing.pfx'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CERTIFICATE_PFX_BASE64))
+          "path=$path" >> $env:GITHUB_OUTPUT
+
+      - name: Build and sign installer
+        working-directory: source
+        shell: pwsh
+        timeout-minutes: 30
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_NATIVE_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
+            throw 'WINDOWS_NATIVE_CERTIFICATE_PASSWORD is missing'
+          }
+          ./tools/build-release.ps1 `
+            -Version $env:VERSION `
+            -CertificatePath '${{ steps.certificate.outputs.path }}' `
+            -CertificatePassword $env:CERTIFICATE_PASSWORD `
+            -CosPublicBaseUrl $env:COS_PUBLIC_BASE_URL `
+            -R2PublicBaseUrl $env:R2_PUBLIC_BASE_URL
+
+      - name: Verify signed payload and dual update channels
+        id: package
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          $publish = "artifacts/release/$env:VERSION/publish"
+          $installer = "artifacts/release/$env:VERSION/installer/lees-system-toolbox_${env:VERSION}_x64-setup.exe"
+          $required = @(
+            $installer,
+            "$publish/LeesSystemToolbox.exe",
+            "$publish/LeesSystemToolbox.PopupAgent.exe",
+            "$publish/LeesSystemToolbox.ElevatedBroker.exe",
+            "$publish/LeesSystemToolbox.ShellExtension.dll",
+            "$publish/LeesSystemToolbox.Sparse.msix"
+          )
+          foreach ($path in $required) {
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing release file: $path" }
+            $signature = Get-AuthenticodeSignature -LiteralPath $path
+            $untrustedSelfSigned = $signature.Status -in @('UnknownError', 'NotTrusted') -and
+              $signature.StatusMessage -match '(?i)(not trusted|untrusted root|不受信任)'
+            if (($signature.Status -ne 'Valid' -and !$untrustedSelfSigned) -or
+                !$signature.SignerCertificate -or
+                $signature.SignerCertificate.Thumbprint -ne $env:EXPECTED_CERTIFICATE_THUMBPRINT) {
+              throw "Invalid signer: $path ($($signature.Status))"
+            }
+          }
+          $urls = @(Get-Content -LiteralPath "$publish/update-manifest-urls.txt" -Encoding UTF8 |
+            Where-Object { ![string]::IsNullOrWhiteSpace($_) })
+          if ($urls.Count -ne 2) { throw 'Signed app must contain exactly two update channels' }
+          $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
+          if ($cosBase -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://') { $cosBase = "https://$cosBase" }
+          $expectedUrls = @(
+            "$cosBase/latest-lees-system-toolbox.json",
+            "$env:R2_PUBLIC_BASE_URL/latest-lees-system-toolbox.json"
+          )
+          if ($urls[0] -ne $expectedUrls[0] -or $urls[1] -ne $expectedUrls[1]) {
+            throw 'Update channel order must be COS primary, R2 fallback'
+          }
+          $hosts = @($urls | ForEach-Object { ([Uri]$_).IdnHost } | Select-Object -Unique)
+          if ($hosts.Count -ne 2 -or @($urls | Where-Object { ([Uri]$_).Scheme -ne 'https' }).Count -gt 0) {
+            throw 'Update channels must use two independent HTTPS hosts'
+          }
+          "installer=$installer" >> $env:GITHUB_OUTPUT
+          "thumbprint=$env:EXPECTED_CERTIFICATE_THUMBPRINT" >> $env:GITHUB_OUTPUT
+
+      - name: Silent installer smoke test
+        working-directory: source
+        shell: pwsh
+        timeout-minutes: 5
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          $installer = (Resolve-Path '${{ steps.package.outputs.installer }}').Path
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\LeesSystemToolbox'
+          $location = (Get-ItemProperty -LiteralPath $key -ErrorAction Stop).InstallLocation
+          foreach ($name in @('LeesSystemToolbox.exe', 'LeesSystemToolbox.Sparse.msix', 'update-manifest-urls.txt', 'Uninstall.exe')) {
+            if (!(Test-Path -LiteralPath (Join-Path $location $name) -PathType Leaf)) { throw "Installed file missing: $name" }
+          }
+          if (!(Get-AppxPackage -Name com.lyq2010.lees-system-toolbox -ErrorAction SilentlyContinue)) {
+            throw 'Sparse package was not registered'
+          }
+          $remove = Start-Process -FilePath (Join-Path $location 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "Uninstaller exited with $($remove.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Get-AppxPackage -Name com.lyq2010.lees-system-toolbox -ErrorAction SilentlyContinue) {
+            throw 'Sparse package remains after uninstall'
+          }
+
+      - name: Stage release files and notes
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          CERTIFICATE_THUMBPRINT: ${{ steps.package.outputs.thumbprint }}
+        run: |
+          $stage = 'release-stage'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          $name = "lees-system-toolbox_${env:VERSION}_x64-setup.exe"
+          Copy-Item -LiteralPath '${{ steps.package.outputs.installer }}' -Destination "$stage/$name" -Force
+          $changelog = [IO.File]::ReadAllText('CHANGELOG.md', [Text.Encoding]::UTF8)
+          $escaped = [Text.RegularExpressions.Regex]::Escape($env:VERSION)
+          $match = [Text.RegularExpressions.Regex]::Match($changelog, "(?ms)^## \[$escaped\][^\r\n]*\r?\n+(.*?)(?=^## \[|\z)")
+          if (!$match.Success) { throw "Version $env:VERSION not found in CHANGELOG.md" }
+          $notes = $match.Groups[1].Value.Trim()
+          if ([string]::IsNullOrWhiteSpace($notes)) { throw 'Release notes are empty' }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          [IO.File]::WriteAllText('artifacts/release-notes.md', $notes + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+          $asset = Get-Item -LiteralPath "$stage/$name"
+          $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
+          $manifest = [ordered]@{
+            version = $env:VERSION
+            publishedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [Globalization.CultureInfo]::InvariantCulture)
+            url = "$base/$([Uri]::EscapeDataString($name))"
+            sha256 = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash
+            size = $asset.Length
+            certificateThumbprint = $env:CERTIFICATE_THUMBPRINT
+            notes = $notes
+            platform = 'windows-x86_64'
+          }
+          [IO.File]::WriteAllText(
+            "$stage/latest-lees-system-toolbox.json",
+            ($manifest | ConvertTo-Json -Depth 3) + [Environment]::NewLine,
+            [Text.UTF8Encoding]::new($false))
+
+      - name: Create draft public Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tags.outputs.public_tag }}
+          name: Lee's 系统工具箱 ${{ steps.tags.outputs.version }}
+          draft: true
+          prerelease: false
+          make_latest: false
+          files: source/release-stage/*
+          body_path: source/artifacts/release-notes.md
+
+      - name: Verify and publish public Release
+        working-directory: source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+        run: |
+          New-Item -ItemType Directory -Force release-verify | Out-Null
+          gh release download $env:PUBLIC_TAG --repo $env:GITHUB_REPOSITORY --dir release-verify
+          Get-ChildItem -LiteralPath release-stage -File | ForEach-Object {
+            $target = Join-Path release-verify $_.Name
+            if (!(Test-Path -LiteralPath $target -PathType Leaf)) { throw "Missing draft asset: $target" }
+            if ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash -ne
+                (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) {
+              throw "Draft asset mismatch: $($_.Name)"
+            }
+          }
+          gh release edit $env:PUBLIC_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=false
+
+      - name: Clean signing material and test registration
+        if: always()
+        shell: pwsh
+        run: |
+          Get-AppxPackage -Name com.lyq2010.lees-system-toolbox -ErrorAction SilentlyContinue |
+            Remove-AppxPackage -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath '${{ steps.certificate.outputs.path }}' -Force -ErrorAction SilentlyContinue
+          foreach ($storeName in @('Root', 'TrustedPublisher')) {
+            $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'CurrentUser')
+            try {
+              $store.Open('ReadWrite')
+              @($store.Certificates.Find('FindByThumbprint', $env:EXPECTED_CERTIFICATE_THUMBPRINT, $false)) |
+                ForEach-Object { $store.Remove($_) }
+            } finally { $store.Dispose() }
+          }
+
+  cos-lees-system-toolbox-mirror:
+    needs: build-lees-system-toolbox
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-lees-system-toolbox.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-system-toolbox.json
+
+      - name: Mirror release to COS
+        env:
+          VERSION: ${{ needs.build-lees-system-toolbox.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user cos-python-sdk-v5
+          python3 - <<'PY'
+          import hashlib, json, os, sys, urllib.request
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from qcloud_cos import CosConfig, CosS3Client
+
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme != "https" or not parsed.netloc:
+              sys.exit("COS_PUBLIC_BASE_URL is invalid")
+          prefix = parsed.path.strip("/")
+          key = lambda name: f"{prefix}/{name}" if prefix else name
+          client = CosS3Client(CosConfig(
+              Region=os.environ["TENCENT_COS_REGION"].strip(),
+              SecretId=os.environ["TENCENT_COS_SECRET_ID"].strip(),
+              SecretKey=os.environ["TENCENT_COS_SECRET_KEY"].strip(),
+              Scheme="https"))
+          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
+          manifest_path = Path("assets/latest-lees-system-toolbox.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          installer = Path(urlparse(manifest["url"]).path).name
+          installer_path = Path("assets") / installer
+          digest = hashlib.sha256(installer_path.read_bytes()).hexdigest().upper()
+          if digest != manifest["sha256"].upper() or installer_path.stat().st_size != manifest["size"]:
+              sys.exit("Installer integrity mismatch")
+          client.upload_file(Bucket=bucket, LocalFilePath=str(installer_path), Key=key(installer), EnableMD5=False)
+          manifest["url"] = f"{base}/{installer}"
+          body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+          client.put_object(Bucket=bucket, Body=body, Key=key("latest-lees-system-toolbox.json"), ContentType="application/json; charset=utf-8")
+          current_key = key(installer)
+          marker = ""
+          while True:
+              args = {"Bucket": bucket, "Prefix": key("lees-system-toolbox_"), "MaxKeys": 1000}
+              if marker:
+                  args["Marker"] = marker
+              listed = client.list_objects(**args)
+              for obj in listed.get("Contents", []) or []:
+                  obj_key = obj.get("Key", "")
+                  if obj_key.endswith("_x64-setup.exe") and obj_key != current_key:
+                      client.delete_object(Bucket=bucket, Key=obj_key)
+              if listed.get("IsTruncated") not in ("true", True):
+                  break
+              marker = listed.get("NextMarker") or ""
+              if not marker:
+                  sys.exit("COS listing was truncated without a marker")
+          with urllib.request.urlopen(f"{base}/latest-lees-system-toolbox.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
+              published = json.loads(response.read().decode("utf-8"))
+          if published.get("version") != os.environ["VERSION"] or published.get("sha256", "").upper() != digest:
+              sys.exit("COS public manifest mismatch")
+          with urllib.request.urlopen(f"{base}/{installer}?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
+              if int(response.headers.get("Content-Length", "0")) != installer_path.stat().st_size:
+                  sys.exit("COS public installer size mismatch")
+          PY
+
+  r2-lees-system-toolbox-mirror:
+    needs: build-lees-system-toolbox
+    runs-on: ubuntu-latest
+    env:
+      R2_BUCKET: packing-list-releases
+      R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+    steps:
+      - name: Download public Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-lees-system-toolbox.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-system-toolbox.json
+
+      - name: Mirror release to R2
+        env:
+          VERSION: ${{ needs.build-lees-system-toolbox.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          account_id="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" https://api.cloudflare.com/client/v4/accounts | python3 -c 'import json,sys; d=json.load(sys.stdin); a=d.get("result") or []; assert d.get("success") and a; print(a[0]["id"])')"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from urllib.parse import urlparse
+          path = Path("assets/latest-lees-system-toolbox.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          installer = Path(urlparse(manifest["url"]).path).name
+          manifest["url"] = f"{os.environ['R2_PUBLIC_BASE_URL'].rstrip('/')}/{installer}"
+          path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+          installer="lees-system-toolbox_${VERSION}_x64-setup.exe"
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${installer}" --file "assets/${installer}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-system-toolbox.json" --file assets/latest-lees-system-toolbox.json --content-type "application/json; charset=utf-8" --remote
+          python3 - "$account_id" <<'PY'
+          import json, os, sys, urllib.parse, urllib.request
+          account_id = sys.argv[1]
+          bucket = os.environ["R2_BUCKET"]
+          token = os.environ["CLOUDFLARE_API_TOKEN"]
+          current = f"lees-system-toolbox_{os.environ['VERSION']}_x64-setup.exe"
+          prefix = "lees-system-toolbox_"
+          def request(method, path, params=None):
+              url = f"https://api.cloudflare.com/client/v4{path}"
+              if params:
+                  url += "?" + urllib.parse.urlencode(params)
+              req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+              if not data.get("success"):
+                  raise SystemExit(json.dumps(data, ensure_ascii=False))
+              return data
+          objects = f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
+          cursor = ""
+          while True:
+              params = {"prefix": prefix, "per_page": "1000"}
+              if cursor:
+                  params["cursor"] = cursor
+              data = request("GET", objects, params)
+              for obj in data.get("result") or []:
+                  key = obj.get("key", "")
+                  if key.endswith("_x64-setup.exe") and key != current:
+                      request("DELETE", f"{objects}/{urllib.parse.quote(key, safe='/')}")
+              info = data.get("result_info") or {}
+              if not info.get("is_truncated"):
+                  break
+              cursor = info.get("cursor") or ""
+              if not cursor:
+                  raise SystemExit("R2 listing was truncated without a cursor")
+          PY
+          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-system-toolbox.json?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json,os,sys; d=json.load(sys.stdin); assert d.get("version") == os.environ["VERSION"]; assert d.get("platform") == "windows-x86_64"; assert d.get("sha256") and d.get("certificateThumbprint")'
+          curl -fsSI -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/${installer}?verify=${GITHUB_RUN_ID}" >/dev/null
