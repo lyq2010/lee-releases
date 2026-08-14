@@ -17,7 +17,11 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: lees-mail-mac-release-${{ inputs.tag }}
+  cancel-in-progress: false
 
 env:
   SOURCE_REPO: lyq2010/lees-mail-mac
@@ -29,6 +33,8 @@ env:
 jobs:
   build:
     runs-on: macos-15
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.tags.outputs.version }}
       public_tag: ${{ steps.tags.outputs.public_tag }}
