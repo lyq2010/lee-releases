@@ -181,6 +181,15 @@ jobs:
             --expect-update-config \
             --source "app/dist/LeesMail-${{ steps.tags.outputs.version }}-source.tar.gz"
 
+      - name: Create GPL corresponding source archive
+        working-directory: source
+        run: |
+          set -euo pipefail
+          npm run release:source -- \
+            --version "${{ steps.tags.outputs.version }}" \
+            --ref HEAD
+          test -s "app/dist/LeesMail-${{ steps.tags.outputs.version }}-source.tar.gz"
+
       - name: Create update manifest
         working-directory: source
         env:
@@ -220,6 +229,7 @@ jobs:
             --notes "Lee's Mail for macOS (Apple Silicon) $VERSION" \
             "app/dist/LeesMail-${VERSION}-arm64.dmg" \
             "app/dist/LeesMail-${VERSION}-arm64.dmg.minisig" \
+            "app/dist/LeesMail-${VERSION}-source.tar.gz" \
             "app/dist/${MANIFEST_NAME}" \
             "app/dist/LeesMail.zip" \
             "app/dist/LeesMail-${VERSION}-source.tar.gz"
