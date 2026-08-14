@@ -266,8 +266,15 @@ jobs:
               ContentType="application/json; charset=utf-8",
           )
 
-          # 清理旧版本产物。前缀严格限定为 LeesMail-，因为这个桶还放着别的项目。
-          keep = {key(f"LeesMail-{version}-arm64.dmg"), key(f"LeesMail-{version}-arm64.dmg.minisig")}
+          # 清理旧版本产物。
+          #
+          # 这个桶是共用的，里面还有 Windows 版 Lee's Mail（LeesMail_1.0.0_x64.msix、
+          # LeesMail_1.0.0_x64-setup.exe，用下划线）和 Lee's Toolbox。只靠前缀区分
+          # 太脆弱——LeesMail- 与 LeesMail_ 只差一个字符。所以按完整正则匹配本项目
+          # 自己的命名，其余一概不碰。
+          import re
+          pattern = re.compile(r"^LeesMail-\d+\.\d+\.\d+-arm64\.dmg(\.minisig)?$")
+          keep = {f"LeesMail-{version}-arm64.dmg", f"LeesMail-{version}-arm64.dmg.minisig"}
           marker = ""
           while True:
               kwargs = {"Bucket": bucket, "Prefix": key("LeesMail-"), "MaxKeys": 1000}
@@ -276,9 +283,8 @@ jobs:
               listed = client.list_objects(**kwargs)
               for obj in listed.get("Contents", []) or []:
                   obj_key = obj.get("Key", "")
-                  if not obj_key.endswith((".dmg", ".dmg.minisig")):
-                      continue
-                  if obj_key in keep:
+                  name = obj_key[len(prefix) + 1:] if prefix else obj_key
+                  if not pattern.match(name) or name in keep:
                       continue
                   client.delete_object(Bucket=bucket, Key=obj_key)
                   print(f"已删除旧产物: {obj_key}")
@@ -315,12 +321,15 @@ jobs:
           # 清理旧版本产物。这个桶与 Lee's Toolbox Mac 共用，所以前缀严格限定为
           # LeesMail-，且只删 .dmg / .dmg.minisig，不碰清单和别的项目的对象。
           python3 - "$account_id" <<'PY'
-          import json, os, sys, urllib.parse, urllib.request
+          import json, os, re, sys, urllib.parse, urllib.request
 
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"].strip()
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
           version = os.environ["VERSION"]
+          # 完整正则，不是前缀匹配：同桶里还有 Windows 版 Lee's Mail（LeesMail_…_x64.msix
+          # / -setup.exe）和 Lee's Toolbox，只差一个字符的前缀不足以安全区分。
+          pattern = re.compile(r"^LeesMail-\d+\.\d+\.\d+-arm64\.dmg(\.minisig)?$")
           keep = {f"LeesMail-{version}-arm64.dmg", f"LeesMail-{version}-arm64.dmg.minisig"}
 
           def api(method, path, params=None):
@@ -345,7 +354,7 @@ jobs:
               data = api("GET", base, params)
               for obj in data.get("result") or []:
                   name = obj.get("key", "")
-                  if name.endswith((".dmg", ".dmg.minisig")) and name not in keep:
+                  if pattern.match(name) and name not in keep:
                       stale.append(name)
               info = data.get("result_info") or {}
               cursor = info.get("cursor") or ""
