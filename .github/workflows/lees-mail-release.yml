@@ -520,7 +520,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tags.outputs.public_tag }}
-          name: Lee's Mail ${{ steps.tags.outputs.version }}
+          name: Lee's Mail for Windows ${{ steps.tags.outputs.version }}
           draft: false
           prerelease: false
           make_latest: false

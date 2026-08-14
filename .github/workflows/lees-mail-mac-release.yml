@@ -218,6 +218,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "Lee's Mail for Mac $VERSION" \
             --notes "Lee's Mail for macOS (Apple Silicon) $VERSION" \
+            --latest=false \
             "app/dist/LeesMail-${VERSION}-arm64.dmg" \
             "app/dist/LeesMail-${VERSION}-arm64.dmg.minisig" \
             "app/dist/${MANIFEST_NAME}" \
