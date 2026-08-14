@@ -1,0 +1,292 @@
+name: Lee's Mail Mac Release
+
+# 私有源码仓 lyq2010/lees-mail-mac 打 tag 后在这里发版。
+# 更新通道沿用 native-release.yml 的双通道做法：COS 为主、R2 为备，
+# 两条通道各放一份 latest-lees-mail-electron.json，客户端按顺序失败切换。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "私有源码仓 tag（如 v0.1.0）"
+        required: true
+        type: string
+      publish:
+        description: '发布到 COS / R2 更新通道'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_REPO: lyq2010/lees-mail-mac
+  MANIFEST_NAME: latest-lees-mail-electron.json
+  # 与 native-release.yml 相同的备用通道，非 secret。
+  R2_BUCKET: packing-list-releases
+  R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+
+jobs:
+  build:
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.tags.outputs.version }}
+      public_tag: ${{ steps.tags.outputs.public_tag }}
+    steps:
+      - name: Resolve tags
+        id: tags
+        env:
+          RAW_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          source_tag="${RAW_TAG}"
+          [[ "$source_tag" == v* ]] || source_tag="v${source_tag}"
+          version="${source_tag#v}"
+          # 版本号参与 Info.plist 与包内 package.json，必须是纯 x.y.z。
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "版本号必须形如 0.1.0，收到：$version" >&2
+            exit 1
+          }
+          echo "source_tag=$source_tag" | tee -a "$GITHUB_OUTPUT"
+          echo "version=$version" | tee -a "$GITHUB_OUTPUT"
+          echo "public_tag=lees-mail-mac-v$version" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Create private source read token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: lees-mail-mac
+          permission-contents: read
+
+      - name: Checkout Lee's Mail Mac source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ steps.tags.outputs.source_tag }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+          submodules: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install dependencies
+        working-directory: source
+        run: npm ci
+
+      # npm run build 只打包已存在的 app/mailsync，不会编译它。
+      # libetpan 的 header farm 由 Xcode 的依赖链自动准备，无需额外步骤。
+      - name: Build mailsync (arm64)
+        working-directory: source/mailsync
+        run: |
+          set -euo pipefail
+          xcodebuild -project MailSync.xcodeproj -scheme mailsync \
+            -configuration Release -derivedDataPath "$RUNNER_TEMP/mailsync-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
+          test -x ../app/mailsync
+          file ../app/mailsync | grep -q arm64
+
+      - name: Build app, DMG and ZIP
+        working-directory: source
+        env:
+          LEES_MAIL_VERSION: ${{ steps.tags.outputs.version }}
+          LEES_MAIL_GOOGLE_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
+          LEES_MAIL_GOOGLE_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
+          LEES_MAIL_MICROSOFT_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          cos_base="${COS_PUBLIC_BASE_URL%/}"
+          [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
+          # 清单文件名固定，所以构建阶段就能拼出两条通道的地址，不必等上传完成。
+          export LEES_MAIL_UPDATE_MANIFEST_URLS="${cos_base}/${MANIFEST_NAME},${R2_PUBLIC_BASE_URL}/${MANIFEST_NAME}"
+          echo "更新通道：${LEES_MAIL_UPDATE_MANIFEST_URLS}"
+          npm run build
+          test -f app/dist/LeesMail.dmg
+          test -f app/dist/LeesMail.zip
+
+      - name: Sign DMG with minisign
+        working-directory: source
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.LEESMAIL_MAC_MINISIGN_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "缺少 LEESMAIL_MAC_MINISIGN_KEY，无法为更新通道签名。" >&2
+            exit 1
+          fi
+          brew list minisign >/dev/null 2>&1 || brew install minisign
+          key="$RUNNER_TEMP/minisign.key"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          chmod 600 "$key"
+          # 私钥无密码，仍需喂一个空行给 minisign 的密码提示。
+          # -H 生成预哈希签名，与客户端的验证方式一致。
+          printf '\n' | minisign -S -H -s "$key" -m app/dist/LeesMail.dmg
+          rm -f "$key"
+          test -f app/dist/LeesMail.dmg.minisig
+
+      - name: Create update manifest
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          cos_base="${COS_PUBLIC_BASE_URL%/}"
+          [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
+          dmg_name="LeesMail-${VERSION}-arm64.dmg"
+          mv app/dist/LeesMail.dmg "app/dist/${dmg_name}"
+          mv app/dist/LeesMail.dmg.minisig "app/dist/${dmg_name}.minisig"
+          # 清单里的下载地址指向 COS 主通道；R2 上放同名副本作为备份。
+          node scripts/release/create-update-manifest.js \
+            --version "$VERSION" \
+            --dmg "app/dist/${dmg_name}" \
+            --download-url "${cos_base}/${dmg_name}" \
+            --output "app/dist/${MANIFEST_NAME}"
+          test -s "app/dist/${MANIFEST_NAME}"
+          cat "app/dist/${MANIFEST_NAME}"
+
+      - name: Verify release artifacts
+        working-directory: source
+        run: |
+          set -euo pipefail
+          # 该门禁要求至少两个不同的无凭据 HTTPS 清单地址，正好对应主备双通道。
+          npm run test:release -- --version "${{ steps.tags.outputs.version }}" --expect-update-config
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          gh release delete "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$PUBLIC_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Lee's Mail for Mac $VERSION" \
+            --notes "Lee's Mail for macOS (Apple Silicon) $VERSION" \
+            "app/dist/LeesMail-${VERSION}-arm64.dmg" \
+            "app/dist/LeesMail-${VERSION}-arm64.dmg.minisig" \
+            "app/dist/${MANIFEST_NAME}" \
+            "app/dist/LeesMail.zip"
+
+  publish-channels:
+    needs: build
+    if: ${{ needs.build.result == 'success' && inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s "assets/${MANIFEST_NAME}"
+
+      - name: Mirror to COS (primary channel)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user cos-python-sdk-v5
+          python3 - <<'PY'
+          import os, sys
+          from pathlib import Path
+          from urllib.parse import urlparse
+          from qcloud_cos import CosConfig, CosS3Client
+
+          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
+          if "://" not in base:
+              base = f"https://{base}"
+          parsed = urlparse(base)
+          if parsed.scheme != "https" or not parsed.netloc:
+              sys.exit(f"COS_PUBLIC_BASE_URL 无效: {base}")
+          prefix = parsed.path.strip("/")
+          key = lambda name: f"{prefix}/{name}" if prefix else name
+
+          client = CosS3Client(CosConfig(
+              Region=os.environ["TENCENT_COS_REGION"].strip(),
+              SecretId=os.environ["TENCENT_COS_SECRET_ID"].strip(),
+              SecretKey=os.environ["TENCENT_COS_SECRET_KEY"].strip(),
+              Scheme="https",
+          ))
+          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
+          version = os.environ["VERSION"]
+          manifest = os.environ.get("MANIFEST_NAME", "latest-lees-mail-electron.json")
+
+          for name, ctype in (
+              (f"LeesMail-{version}-arm64.dmg", "application/x-apple-diskimage"),
+              (f"LeesMail-{version}-arm64.dmg.minisig", "text/plain; charset=utf-8"),
+          ):
+              path = Path("assets") / name
+              if not path.is_file():
+                  sys.exit(f"缺少发行物: {path}")
+              client.upload_file(Bucket=bucket, LocalFilePath=str(path), Key=key(name), EnableMD5=False)
+
+          # 清单最后传：它一旦就位，客户端就会开始下载对应的 DMG。
+          client.put_object(
+              Bucket=bucket,
+              Body=(Path("assets") / manifest).read_bytes(),
+              Key=key(manifest),
+              ContentType="application/json; charset=utf-8",
+          )
+          print("COS 主通道已更新")
+          PY
+
+      - name: Mirror to R2 (fallback channel)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          account_id="$(
+            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.cloudflare.com/client/v4/accounts |
+            python3 -c 'import json,sys; d=json.load(sys.stdin); a=d.get("result") or []; assert d.get("success") and a; print(a[0]["id"])'
+          )"
+          export CLOUDFLARE_ACCOUNT_ID="$account_id"
+          dmg="LeesMail-${VERSION}-arm64.dmg"
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put \
+            "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put \
+            "${R2_BUCKET}/${dmg}.minisig" --file "assets/${dmg}.minisig" --remote
+          npm exec --yes --package wrangler@4 -- wrangler r2 object put \
+            "${R2_BUCKET}/${MANIFEST_NAME}" --file "assets/${MANIFEST_NAME}" \
+            --content-type "application/json; charset=utf-8" --remote
+          echo "R2 备用通道已更新"
+
+      - name: Verify both channels serve the new version
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          cos_base="${COS_PUBLIC_BASE_URL%/}"
+          [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
+          for base in "$cos_base" "$R2_PUBLIC_BASE_URL"; do
+            got="$(curl -fsS -H 'Cache-Control: no-cache' \
+              "${base}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" |
+              python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+            [ "$got" = "$VERSION" ] || { echo "$base 返回 $got，期望 $VERSION" >&2; exit 1; }
+            echo "$base 通道就绪：$got"
+          done
