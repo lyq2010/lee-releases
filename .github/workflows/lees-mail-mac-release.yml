@@ -149,6 +149,13 @@ jobs:
           rm -f "$key"
           test -f app/dist/LeesMail.dmg.minisig
 
+      - name: Verify release artifacts
+        working-directory: source
+        run: |
+          set -euo pipefail
+          # 该门禁要求至少两个不同的无凭据 HTTPS 清单地址，正好对应主备双通道。
+          npm run test:release -- --version "${{ steps.tags.outputs.version }}" --expect-update-config
+
       - name: Create update manifest
         working-directory: source
         env:
@@ -160,23 +167,18 @@ jobs:
           cos_base="${COS_PUBLIC_BASE_URL%/}"
           [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
           dmg_name="LeesMail-${VERSION}-arm64.dmg"
-          mv app/dist/LeesMail.dmg "app/dist/${dmg_name}"
-          mv app/dist/LeesMail.dmg.minisig "app/dist/${dmg_name}.minisig"
-          # 清单里的下载地址指向 COS 主通道；R2 上放同名副本作为备份。
+          # 清单记录的是下载地址与 SHA-256，与本地文件名无关，所以先按原名生成清单、
+          # 再改名。反过来会让上一步的发行物门禁找不到 LeesMail.dmg。
           node scripts/release/create-update-manifest.js \
             --version "$VERSION" \
-            --dmg "app/dist/${dmg_name}" \
+            --dmg app/dist/LeesMail.dmg \
             --download-url "${cos_base}/${dmg_name}" \
             --output "app/dist/${MANIFEST_NAME}"
           test -s "app/dist/${MANIFEST_NAME}"
           cat "app/dist/${MANIFEST_NAME}"
-
-      - name: Verify release artifacts
-        working-directory: source
-        run: |
-          set -euo pipefail
-          # 该门禁要求至少两个不同的无凭据 HTTPS 清单地址，正好对应主备双通道。
-          npm run test:release -- --version "${{ steps.tags.outputs.version }}" --expect-update-config
+          # 改成带版本号的名字，作为 Release 资产与两条通道上的对象名。
+          mv app/dist/LeesMail.dmg "app/dist/${dmg_name}"
+          mv app/dist/LeesMail.dmg.minisig "app/dist/${dmg_name}.minisig"
 
       - name: Publish GitHub Release
         env:
