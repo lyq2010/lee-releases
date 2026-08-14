@@ -85,14 +85,28 @@ jobs:
         run: npm ci
 
       # npm run build 只打包已存在的 app/mailsync，不会编译它。
-      # libetpan 的 header farm 由 Xcode 的依赖链自动准备，无需额外步骤。
+      #
+      # libetpan-prepare 是个纯 script target（把 autogen-result.tar.gz 解开成 header
+      # farm）。让它跟 mailsync 在同一次并行构建里跑，Xcode 会报
+      # "Internal inconsistency error: never received target ended message"。
+      # 本地不会复现，因为 header farm 早已存在、该 target 是空转；干净环境才暴露。
+      # 所以先单独把它跑完，再串行构建 mailsync。
+      - name: Prepare libetpan headers
+        working-directory: source/mailsync
+        run: |
+          set -euo pipefail
+          xcodebuild -project MailSync.xcodeproj -scheme libetpan-prepare \
+            -configuration Release -derivedDataPath "$RUNNER_TEMP/mailsync-derived" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO -jobs 1 build
+          test -d Vendor/libetpan/include/libetpan
+
       - name: Build mailsync (arm64)
         working-directory: source/mailsync
         run: |
           set -euo pipefail
           xcodebuild -project MailSync.xcodeproj -scheme mailsync \
             -configuration Release -derivedDataPath "$RUNNER_TEMP/mailsync-derived" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO build
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO -jobs 1 build
           test -x ../app/mailsync
           file ../app/mailsync | grep -q arm64
 
