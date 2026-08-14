@@ -29,13 +29,13 @@ Lee 系列工具用于把分散的项目资料整理为结构统一、可以持�
 
 | 版本 | 适用系统 | 下载入口 | 安装文件 |
 |---|---|---|---|
-| Windows 通用版 | Windows x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
-| Lee's Toolbox Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E5%B7%A5%E5%85%B7%E7%AE%B1%20Windows&expanded=true) | `lees-toolbox-windows_*_x64-setup.exe` |
-| Lee's 系统工具箱 | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
-| macOS 通用版 | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
-| Lee’s Toolbox Mac | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
-| Lee's Mail | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail&expanded=true) | `LeesMail_*_x64-setup.exe` |
-| Lee’s Mail Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Mail%20Mac&expanded=true) | `Lees-Mail-*-arm64.dmg` |
+| Windows 通用版 | Windows x64 | [下载 v2.5.1](https://github.com/lyq2010/lee-releases/releases/tag/v2.5.1) | `packing-list-toolkit_*_x64-setup.exe` |
+| Lee's Toolbox Windows | Windows 11 22H2+ x64 | [下载 v1.1.8](https://github.com/lyq2010/lee-releases/releases/tag/lees-toolbox-windows-v1.1.8) | `lees-toolbox-windows_*_x64-setup.exe` |
+| Lee's 系统工具箱 | Windows 11 22H2+ x64 | [下载 v0.1.2](https://github.com/lyq2010/lee-releases/releases/tag/lees-system-toolbox-v0.1.2) | `lees-system-toolbox_*_x64-setup.exe` |
+| macOS 通用版 | Apple Silicon | [下载 v2.5.1](https://github.com/lyq2010/lee-releases/releases/tag/v2.5.1) | `packing-list-toolkit_*_arm64.dmg` |
+| Lee’s Toolbox Mac | Apple Silicon | [下载 v3.1.17](https://github.com/lyq2010/lee-releases/releases/tag/native-v3.1.17) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
+| Lee's Mail | Windows 11 22H2+ x64 | [下载 v1.2.49](https://github.com/lyq2010/lee-releases/releases/tag/lees-mail-v1.2.49) | `LeesMail_*_x64-setup.exe` |
+| Lee’s Mail Mac | Apple Silicon、macOS 15+ | [下载 v1.1.0](https://github.com/lyq2010/lee-releases/releases/tag/lees-mail-mac-v1.1.0) | `LeesMail-*-arm64.dmg` |
 
 ### 怎么选择
 
