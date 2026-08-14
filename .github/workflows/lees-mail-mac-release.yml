@@ -265,6 +265,28 @@ jobs:
               Key=key(manifest),
               ContentType="application/json; charset=utf-8",
           )
+
+          # 清理旧版本产物。前缀严格限定为 LeesMail-，因为这个桶还放着别的项目。
+          keep = {key(f"LeesMail-{version}-arm64.dmg"), key(f"LeesMail-{version}-arm64.dmg.minisig")}
+          marker = ""
+          while True:
+              kwargs = {"Bucket": bucket, "Prefix": key("LeesMail-"), "MaxKeys": 1000}
+              if marker:
+                  kwargs["Marker"] = marker
+              listed = client.list_objects(**kwargs)
+              for obj in listed.get("Contents", []) or []:
+                  obj_key = obj.get("Key", "")
+                  if not obj_key.endswith((".dmg", ".dmg.minisig")):
+                      continue
+                  if obj_key in keep:
+                      continue
+                  client.delete_object(Bucket=bucket, Key=obj_key)
+                  print(f"已删除旧产物: {obj_key}")
+              if listed.get("IsTruncated") in ("true", True):
+                  marker = listed.get("NextMarker") or ""
+                  if marker:
+                      continue
+              break
           print("COS 主通道已更新")
           PY
 
@@ -289,6 +311,51 @@ jobs:
           npm exec --yes --package wrangler@4 -- wrangler r2 object put \
             "${R2_BUCKET}/${MANIFEST_NAME}" --file "assets/${MANIFEST_NAME}" \
             --content-type "application/json; charset=utf-8" --remote
+
+          # 清理旧版本产物。这个桶与 Lee's Toolbox Mac 共用，所以前缀严格限定为
+          # LeesMail-，且只删 .dmg / .dmg.minisig，不碰清单和别的项目的对象。
+          python3 - "$account_id" <<'PY'
+          import json, os, sys, urllib.parse, urllib.request
+
+          account_id = sys.argv[1]
+          bucket = os.environ["R2_BUCKET"].strip()
+          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+          version = os.environ["VERSION"]
+          keep = {f"LeesMail-{version}-arm64.dmg", f"LeesMail-{version}-arm64.dmg.minisig"}
+
+          def api(method, path, params=None):
+              url = f"https://api.cloudflare.com/client/v4{path}"
+              if params:
+                  url = f"{url}?{urllib.parse.urlencode(params)}"
+              req = urllib.request.Request(url, method=method,
+                                           headers={"Authorization": f"Bearer {token}"})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  data = json.loads(response.read().decode("utf-8"))
+              if not data.get("success"):
+                  raise SystemExit(json.dumps(data, ensure_ascii=False))
+              return data
+
+          base = (f"/accounts/{urllib.parse.quote(account_id, safe='')}"
+                  f"/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects")
+          stale, cursor = [], ""
+          while True:
+              params = {"prefix": "LeesMail-", "per_page": "1000"}
+              if cursor:
+                  params["cursor"] = cursor
+              data = api("GET", base, params)
+              for obj in data.get("result") or []:
+                  name = obj.get("key", "")
+                  if name.endswith((".dmg", ".dmg.minisig")) and name not in keep:
+                      stale.append(name)
+              info = data.get("result_info") or {}
+              cursor = info.get("cursor") or ""
+              if not cursor:
+                  break
+
+          for name in stale:
+              api("DELETE", f"{base}/{urllib.parse.quote(name, safe='')}")
+              print(f"已删除旧产物: {name}")
+          PY
           echo "R2 备用通道已更新"
 
       - name: Verify both channels serve the new version
