@@ -129,6 +129,22 @@ jobs:
           test -f app/dist/LeesMail.dmg
           test -f app/dist/LeesMail.zip
 
+      - name: Create GPL corresponding source archive
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="app/dist/LeesMail-${VERSION}-source.tar.gz"
+          git archive --format=tar.gz \
+            --prefix="LeesMail-${VERSION}-source/" \
+            --output="$archive" \
+            HEAD -- . ':(exclude).snapcraft/credentials.enc'
+          test -s "$archive"
+          tar -tzf "$archive" | grep -q "LeesMail-${VERSION}-source/LICENSE.md"
+          tar -tzf "$archive" | grep -q "LeesMail-${VERSION}-source/UPSTREAM.md"
+          tar -tzf "$archive" | grep -q "LeesMail-${VERSION}-source/mailsync/"
+
       - name: Sign DMG with minisign
         working-directory: source
         env:
@@ -154,7 +170,10 @@ jobs:
         run: |
           set -euo pipefail
           # 该门禁要求至少两个不同的无凭据 HTTPS 清单地址，正好对应主备双通道。
-          npm run test:release -- --version "${{ steps.tags.outputs.version }}" --expect-update-config
+          npm run test:release -- \
+            --version "${{ steps.tags.outputs.version }}" \
+            --expect-update-config \
+            --source "app/dist/LeesMail-${{ steps.tags.outputs.version }}-source.tar.gz"
 
       - name: Create update manifest
         working-directory: source
@@ -196,9 +215,10 @@ jobs:
             "app/dist/LeesMail-${VERSION}-arm64.dmg" \
             "app/dist/LeesMail-${VERSION}-arm64.dmg.minisig" \
             "app/dist/${MANIFEST_NAME}" \
-            "app/dist/LeesMail.zip"
+            "app/dist/LeesMail.zip" \
+            "app/dist/LeesMail-${VERSION}-source.tar.gz"
 
-  publish-channels:
+  cos-lees-mail-mac-mirror:
     needs: build
     if: ${{ needs.build.result == 'success' && inputs.publish }}
     runs-on: ubuntu-latest
@@ -296,6 +316,35 @@ jobs:
           print("COS 主通道已更新")
           PY
 
+      - name: Verify COS serves the new version
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          set -euo pipefail
+          cos_base="${COS_PUBLIC_BASE_URL%/}"
+          [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
+          got="$(curl -fsS -H 'Cache-Control: no-cache' \
+            "${cos_base}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          [ "$got" = "$VERSION" ] || { echo "$cos_base 返回 $got，期望 $VERSION" >&2; exit 1; }
+          echo "COS 主通道就绪：$got"
+
+  r2-lees-mail-mac-mirror:
+    needs: build
+    if: ${{ needs.build.result == 'success' && inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s "assets/${MANIFEST_NAME}"
+
       - name: Mirror to R2 (fallback channel)
         env:
           VERSION: ${{ needs.build.outputs.version }}
@@ -367,18 +416,13 @@ jobs:
           PY
           echo "R2 备用通道已更新"
 
-      - name: Verify both channels serve the new version
+      - name: Verify R2 serves the new version
         env:
           VERSION: ${{ needs.build.outputs.version }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
         run: |
           set -euo pipefail
-          cos_base="${COS_PUBLIC_BASE_URL%/}"
-          [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
-          for base in "$cos_base" "$R2_PUBLIC_BASE_URL"; do
-            got="$(curl -fsS -H 'Cache-Control: no-cache' \
-              "${base}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" |
-              python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
-            [ "$got" = "$VERSION" ] || { echo "$base 返回 $got，期望 $VERSION" >&2; exit 1; }
-            echo "$base 通道就绪：$got"
-          done
+          got="$(curl -fsS -H 'Cache-Control: no-cache' \
+            "${R2_PUBLIC_BASE_URL}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" |
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+          [ "$got" = "$VERSION" ] || { echo "$R2_PUBLIC_BASE_URL 返回 $got，期望 $VERSION" >&2; exit 1; }
+          echo "R2 备用通道就绪：$got"
