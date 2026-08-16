@@ -1,4 +1,4 @@
-name: Inventory Packing List Public Artifacts
+name: Remove Packing List Public Artifacts
 
 on:
   workflow_dispatch:
@@ -7,10 +7,10 @@ permissions:
   contents: read
 
 jobs:
-  inventory-cos:
+  purge-cos:
     runs-on: ubuntu-latest
     steps:
-      - name: List matching COS objects
+      - name: Delete exact matching COS objects
         env:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
@@ -60,20 +60,32 @@ jobs:
           latest = key("latest.json")
           if latest in list_keys(latest):
               targets.append(latest)
-          print(f"COS_BASE={base}")
-          print(f"COS_BUCKET={bucket}")
-          print(f"COS_REGION={os.environ['TENCENT_COS_REGION'].strip()}")
-          print(f"COS_TARGET_COUNT={len(set(targets))}")
-          for target in sorted(set(targets)):
-              print(f"COS_TARGET={target}")
+          expected = {
+              key("latest.json"),
+              key("packing-list-toolkit_2.5.1_aarch64.app.tar.gz"),
+              key("packing-list-toolkit_2.5.1_aarch64.app.tar.gz.sig"),
+              key("packing-list-toolkit_2.5.1_arm64.dmg"),
+              key("packing-list-toolkit_2.5.1_x64-setup.exe"),
+          }
+          if set(targets) != expected:
+              raise SystemExit(f"COS target set changed; refusing deletion: {sorted(set(targets))}")
+          for target in sorted(expected):
+              client.delete_object(Bucket=bucket, Key=target)
+              print(f"Deleted COS object: {target}")
+          remaining = set(list_keys(key("packing-list-toolkit_")))
+          if latest in list_keys(latest):
+              remaining.add(latest)
+          if remaining:
+              raise SystemExit(f"COS cleanup incomplete: {sorted(remaining)}")
+          print("COS cleanup verified: 5 objects deleted")
           PY
 
-  inventory-r2:
+  purge-r2:
     runs-on: ubuntu-latest
     env:
       R2_BUCKET: packing-list-releases
     steps:
-      - name: List matching R2 objects
+      - name: Delete exact matching R2 objects
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
@@ -84,11 +96,11 @@ jobs:
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
           bucket = os.environ["R2_BUCKET"].strip()
 
-          def api(path, params=None):
+          def api(path, params=None, method="GET"):
               url = f"https://api.cloudflare.com/client/v4{path}"
               if params:
                   url += "?" + urllib.parse.urlencode(params)
-              request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+              request = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
               with urllib.request.urlopen(request, timeout=30) as response:
                   data = json.loads(response.read().decode("utf-8"))
               if not data.get("success"):
@@ -100,6 +112,8 @@ jobs:
               raise SystemExit(f"Expected exactly one Cloudflare account, got {len(accounts)}")
           account_id = accounts[0]["id"]
           account_name = accounts[0].get("name", "")
+          if account_id != "ddc02ab00dd3754d95fa60562a5ec351":
+              raise SystemExit(f"Unexpected Cloudflare account: {account_id}")
           bucket_path = f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
 
           def list_keys(prefix):
@@ -121,10 +135,23 @@ jobs:
           targets = list_keys("packing-list-toolkit_")
           if "latest.json" in list_keys("latest.json"):
               targets.append("latest.json")
-          print(f"R2_ACCOUNT_ID={account_id}")
-          print(f"R2_ACCOUNT_NAME={account_name}")
-          print(f"R2_BUCKET={bucket}")
-          print(f"R2_TARGET_COUNT={len(set(targets))}")
-          for target in sorted(set(targets)):
-              print(f"R2_TARGET={target}")
+          expected = {
+              "latest.json",
+              "packing-list-toolkit_2.5.1_aarch64.app.tar.gz",
+              "packing-list-toolkit_2.5.1_aarch64.app.tar.gz.sig",
+              "packing-list-toolkit_2.5.1_arm64.dmg",
+              "packing-list-toolkit_2.5.1_x64-setup.exe",
+          }
+          if set(targets) != expected:
+              raise SystemExit(f"R2 target set changed; refusing deletion: {sorted(set(targets))}")
+          for target in sorted(expected):
+              path = f"{bucket_path}/{urllib.parse.quote(target, safe='/')}"
+              api(path, method="DELETE")
+              print(f"Deleted R2 object: {target}")
+          remaining = set(list_keys("packing-list-toolkit_"))
+          if "latest.json" in list_keys("latest.json"):
+              remaining.add("latest.json")
+          if remaining:
+              raise SystemExit(f"R2 cleanup incomplete: {sorted(remaining)}")
+          print(f"R2 cleanup verified for {account_name}: 5 objects deleted")
           PY
