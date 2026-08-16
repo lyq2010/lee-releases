@@ -314,7 +314,6 @@ jobs:
 
           current_key = key(dmg)
           for object_prefix, suffix in (
-              ("packing-list-toolkit_", "_macos-native-arm64.dmg"),
               ("Lee.s.Toolbox.Mac_", "_macOS_arm64.dmg"),
           ):
               marker = ""
@@ -403,7 +402,6 @@ jobs:
           token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
           current = f"Lee.s.Toolbox.Mac_{os.environ['VERSION']}_macOS_arm64.dmg"
           patterns = (
-              ("packing-list-toolkit_", "_macos-native-arm64.dmg"),
               ("Lee.s.Toolbox.Mac_", "_macOS_arm64.dmg"),
           )
 
