@@ -523,7 +523,7 @@ jobs:
           name: Lee's Mail for Windows ${{ steps.tags.outputs.version }}
           draft: false
           prerelease: false
-          make_latest: false
+          make_latest: true
           files: source/release-stage/*
           body_path: source/artifacts/release-notes.md
 

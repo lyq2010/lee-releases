@@ -2,48 +2,39 @@
 
 # Lee Releases
 
-**Lee 系列桌面工具与 Lee's Mail 的公开下载、安装与使用中心**
+**Lee 系列原生桌面工具与 Lee's Mail 的公开下载、安装与使用中心**
 
-这里集中发布项目数据工具、原生工具箱和个人邮箱客户端。每个产品使用独立标签、
+这里集中发布原生工具箱和个人邮箱客户端。每个产品使用独立标签、
 安装包名称与更新清单。
 
 </div>
 
-> [!IMPORTANT]
-> 业务表格只在本机处理。应用不会上传或缓存文件正文；“从系统拉数”仅在连接公司生产管理系统时发起业务查询。
-
 ## 产品介绍
 
-Lee 系列工具用于把分散的项目资料整理为结构统一、可以持续更新的项目概览表。应用覆盖从文件导入、生产与物流匹配，到汇总、发货和合同收款的完整流程，并提供清晰的执行记录和失败诊断。
+本仓库提供 Lee 系列 Windows/macOS 原生工具箱，以及 Lee's Mail 邮件客户端的公开安装包与更新清单。
 
 主要能力：
 
-- 生成或更新建筑板、冷库板项目概览表；
-- 合并装箱明细，刷新生产状态、物流状态和下单余量；
-- 从生产管理系统获取装箱明细、切锯表和成品物流；
-- 生成或刷新「汇总」「每日发货数据」「合同收款」；
-- 保留工作簿中的既有手填数据、公式和业务格式；
-- 提供文本处理、计算器、批量重命名和快捷启动器等本地工具。
+- 原生工具箱提供文本处理、计算器、批量重命名和快捷启动器等本地工具；
+- Lee's Mail 提供 Windows 与 macOS 原生邮件客户端；
+- 各产品使用独立更新通道，并校验更新包来源、哈希和签名。
 
 ## 下载与版本选择
 
 | 版本 | 适用系统 | 下载入口 | 安装文件 |
 |---|---|---|---|
-| Windows 通用版 | Windows x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_x64-setup.exe` |
 | Lee's Toolbox Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E5%B7%A5%E5%85%B7%E7%AE%B1%20Windows&expanded=true) | `lees-toolbox-windows_*_x64-setup.exe` |
 | Lee's 系统工具箱 | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
-| macOS 通用版 | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `packing-list-toolkit_*_arm64.dmg` |
 | Lee’s Toolbox Mac | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
-| Lee's Mail | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
+| Lee's Mail | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `LeesMail_*_x64-setup.exe` |
 | Lee’s Mail Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `Lees-Mail-*-arm64.dmg` |
 
 ### 怎么选择
 
-- 希望兼容现有稳定工作流，可选择 Windows 或 macOS 通用版。
 - 使用 Windows 11，希望获得原生界面、较快启动和较低后台占用，可选择 Lee's Toolbox Windows。
 - 使用 Apple Silicon Mac，希望使用 SwiftUI 原生界面和原生业务引擎，可选择 Lee’s Toolbox Mac。
 - 使用 Apple Silicon Mac，希望使用独立的原生邮件客户端，可选择 Lee’s Mail Mac。
-- 通用版与原生版使用独立的应用身份、数据目录和更新通道，可以并行安装。
+- 各产品使用独立的应用身份、数据目录和更新通道，可以并行安装。
 
 ## 安装
 
@@ -69,58 +60,14 @@ Lee’s Mail Mac 与 Lee’s Toolbox Mac 一样使用 ad-hoc 应用签名，不�
 也不执行 Apple 公证。首次安装需要按上一步在系统设置中确认；后续应用内更新会同时
 校验 HTTPS 来源、文件大小、SHA-256 和内置公钥对应的 Minisign 签名。
 
-## 快速开始
-
-1. 选择「建筑板 · 概览表」或「冷库板 · 概览表」。
-2. 选择“新建”或“更新”流程；放入已有概览表时，应用会自动进入更新模式。
-3. 将业务文件拖入对应文件槽，也可以点击文件槽选择文件。
-4. 新建时填写项目名和保存目录；更新时确认原概览表及输出位置。
-5. 按需开启「汇总」「每日发货」「合同收款」和「先备份」。
-6. 点击「执行」或「开始处理」，也可以使用 `Ctrl/⌘ + Enter`。
-7. 完成后，从结果区打开文件或所在目录；需要排查时可查看事件区并复制日志。
-
-## 文件怎么选
-
-| 业务入口 | 新建时必需 | 更新时可选 |
-|---|---|---|
-| 建筑板 | 装箱明细、项目名、保存目录 | 原概览表、装箱明细、成品物流、切锯表、下单详情、转账款明细、开票明细 |
-| 冷库板 | 下单详情、项目名、保存目录 | 原概览表、下单详情、成品物流、切锯表 |
-
-更新时只会刷新本次提供的数据：没有放入某类可选文件，就不会强制重建对应内容。处理重要概览表前，建议开启「先备份」。
-
-### 支持的文件
-
-- 工作簿：`.xlsx`、`.xlsm`；
-- 下单详情：还支持 UTF-8 或 GBK 编码的 `.csv`；
-- 多份装箱明细可以一次导入，应用会按业务规则合并。
-
-## 从系统拉数
-
-点击「从系统拉数」，应用会根据下单详情或概览表中的项目、库号和合同信息获取对应数据。
-
-- 一次只能处理一个项目；
-- 可以调整车间、切锯范围和物流时间；
-- 装箱明细会按库号逐项获取；
-- 任一必要请求失败时不会提交不完整结果；
-- 拉取成功的文件会自动回填到对应文件槽。
-
-## 输出与诊断
-
-- 成功后，结果区会显示输出文件，并提供「打开文件」「打开目录」。
-- 执行计划、步骤进度、警告和错误会保留在事件区。
-- 如果输出文件正被 Excel 占用，请关闭该文件后重试。
-- 检测到 Microsoft Excel 时，应用会在收尾阶段重算公式；没有 Excel 也可以生成文件，公式会在下次用 Excel 打开时计算。
-- 失败时不会覆盖正式结果；应用会尽量保留带时间戳的诊断文件，便于定位问题。
-
 ## 隐私与数据
 
-- 业务文件正文仅在本机读写；
-- 应用只保存最近任务所需的本地元信息；
+- 邮件与工具数据由对应应用在本机处理；
 - 更新包会校验来源、大小、哈希和签名；
-- 公司系统地址和内部快捷入口由发布配置注入，不写入公开仓库。
+- 私有配置与密钥不写入公开仓库。
 
 ## 获取帮助
 
-遇到问题时，请提供应用版本、平台、失败步骤和事件区日志；不要在公开位置上传包含业务数据的原始工作簿。
+遇到问题时，请提供应用版本、平台、失败步骤和必要日志；不要在公开位置上传包含隐私或账户信息的原始数据。
 
 公司内部使用，保留所有权利。
