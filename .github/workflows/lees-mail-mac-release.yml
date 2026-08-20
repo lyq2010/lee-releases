@@ -68,7 +68,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout Lee's Mail Mac source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.SOURCE_REPO }}
           ref: ${{ steps.tags.outputs.source_tag }}
@@ -76,7 +76,7 @@ jobs:
           token: ${{ steps.source-token.outputs.token }}
           submodules: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -161,6 +161,9 @@ jobs:
             echo "缺少 LEESMAIL_MAC_MINISIGN_KEY，无法为更新通道签名。" >&2
             exit 1
           fi
+          # runner 镜像预置的 aws/tap 未受 Homebrew 新的 tap 信任策略认可，
+          # 每条 brew 命令都会为它打印一段警告。本 job 不使用 aws CLI。
+          brew untap aws/tap >/dev/null 2>&1 || true
           brew list minisign >/dev/null 2>&1 || brew install minisign
           key="$RUNNER_TEMP/minisign.key"
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
