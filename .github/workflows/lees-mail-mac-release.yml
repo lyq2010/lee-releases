@@ -369,6 +369,25 @@ jobs:
           )"
           export CLOUDFLARE_ACCOUNT_ID="$account_id"
           dmg="LeesMail-${VERSION}-arm64.dmg"
+
+          # R2 上的清单必须指向 R2 自己的 DMG 与签名。客户端会依次尝试两条清单地址，
+          # 但下载只认它拿到的那份清单里的 downloadURL，没有跨通道回退；若两份清单都写
+          # COS，COS 挂掉时客户端能从 R2 发现新版本，下载仍会回到 COS 而失败。
+          # sha256 与 downloadSize 描述的是同一个文件，保持不变。
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
+          dmg = f"LeesMail-{os.environ['VERSION']}-arm64.dmg"
+          path = Path("assets") / os.environ["MANIFEST_NAME"]
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          manifest["downloadURL"] = f"{base}/{dmg}"
+          manifest["minisignSignatureURL"] = f"{base}/{dmg}.minisig"
+          path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          PY
+
           npm exec --yes --package wrangler@4 -- wrangler r2 object put \
             "${R2_BUCKET}/${dmg}" --file "assets/${dmg}" --remote
           npm exec --yes --package wrangler@4 -- wrangler r2 object put \
@@ -431,8 +450,24 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          got="$(curl -fsS -H 'Cache-Control: no-cache' \
-            "${R2_PUBLIC_BASE_URL}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
-          [ "$got" = "$VERSION" ] || { echo "$R2_PUBLIC_BASE_URL 返回 $got，期望 $VERSION" >&2; exit 1; }
-          echo "R2 备用通道就绪：$got"
+          curl -fsS -H 'Cache-Control: no-cache' \
+            "${R2_PUBLIC_BASE_URL}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" \
+            -o r2-manifest.json
+          # 备用通道要能独立完成一次升级：版本对得上，且清单里的下载地址落在 R2 自己身上。
+          python3 - "$VERSION" "$R2_PUBLIC_BASE_URL" r2-manifest.json <<'PY'
+          import json, sys
+
+          version, base, path = sys.argv[1], sys.argv[2].strip().rstrip("/"), sys.argv[3]
+          with open(path, encoding="utf-8") as handle:
+              manifest = json.load(handle)
+          if manifest["version"] != version:
+              sys.exit(f"R2 返回 {manifest['version']}，期望 {version}")
+          for field in ("downloadURL", "minisignSignatureURL"):
+              if not manifest[field].startswith(f"{base}/"):
+                  sys.exit(f"R2 清单的 {field} 仍指向 {manifest[field]}，备用通道无法独立下载。")
+          print(manifest["downloadURL"])
+          PY
+          # 顺带确认签名文件真的能从 R2 取到（几百字节，不必拉整个 DMG）。
+          sig_url="$(python3 -c 'import json;print(json.load(open("r2-manifest.json"))["minisignSignatureURL"])')"
+          curl -fsS -o /dev/null "$sig_url"
+          echo "R2 备用通道就绪：$VERSION"
