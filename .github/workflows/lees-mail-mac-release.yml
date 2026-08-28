@@ -90,6 +90,10 @@ jobs:
         working-directory: source
         run: npm ci
 
+      - name: Preflight checks
+        working-directory: source
+        run: npm run test:preflight
+
       # npm run build 只打包已存在的 app/mailsync，不会编译它。
       #
       # libetpan-prepare 是个纯 script target（把 autogen-result.tar.gz 解开成 header
