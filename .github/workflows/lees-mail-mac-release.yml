@@ -199,6 +199,39 @@ jobs:
             --expect-update-config \
             --source "app/dist/LeesMail-${{ steps.tags.outputs.version }}-source.tar.gz"
 
+      - name: Extract release notes
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -f scripts/release/extract-changelog-notes.js ]; then
+            node scripts/release/extract-changelog-notes.js \
+              --version "$VERSION" \
+              --output release-notes.md
+          else
+            python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = re.escape(os.environ["VERSION"])
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(
+              rf"^## {version}(?:\s*\([^)]*\))?[^\n]*\n\n(?P<body>.*?)(?=^## |\Z)",
+              changelog,
+              flags=re.MULTILINE | re.DOTALL,
+          )
+          if match is None:
+              raise SystemExit(f"CHANGELOG.md 缺少版本 {os.environ['VERSION']} 的发布说明")
+          notes = match.group("body").strip()
+          if not notes:
+              raise SystemExit("发布说明为空")
+          Path("release-notes.md").write_text(notes + "\n", encoding="utf-8")
+          PY
+          fi
+          test -s release-notes.md
+
       - name: Create update manifest
         working-directory: source
         env:
@@ -216,6 +249,7 @@ jobs:
             --version "$VERSION" \
             --dmg app/dist/LeesMail.dmg \
             --download-url "${cos_base}/${dmg_name}" \
+            --notes-file release-notes.md \
             --output "app/dist/${MANIFEST_NAME}"
           test -s "app/dist/${MANIFEST_NAME}"
           cat "app/dist/${MANIFEST_NAME}"
@@ -235,7 +269,7 @@ jobs:
           gh release create "$PUBLIC_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Lee's Mail for Mac $VERSION" \
-            --notes "Lee's Mail for macOS (Apple Silicon) $VERSION" \
+            --notes-file release-notes.md \
             --latest=false \
             "app/dist/LeesMail-${VERSION}-arm64.dmg" \
             "app/dist/LeesMail-${VERSION}-arm64.dmg.minisig" \
