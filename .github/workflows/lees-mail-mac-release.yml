@@ -83,7 +83,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: '24'
 
       - name: Select Xcode
         run: |
@@ -91,9 +91,17 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
 
-      - name: Install dependencies
+      - name: Install JavaScript dependencies
         working-directory: source
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron binary
+        working-directory: source
+        run: npm run install:electron
+
+      - name: Build native dependencies
+        working-directory: source
+        run: npm run postinstall
 
       - name: Preflight
         if: ${{ !inputs.run_extended_preflight }}
@@ -249,6 +257,7 @@ jobs:
             --version "$VERSION" \
             --dmg app/dist/LeesMail.dmg \
             --download-url "${cos_base}/${dmg_name}" \
+            --minimum-system-version 15.0 \
             --notes-file release-notes.md \
             --output "app/dist/${MANIFEST_NAME}"
           test -s "app/dist/${MANIFEST_NAME}"
