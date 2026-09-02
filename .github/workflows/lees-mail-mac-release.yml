@@ -139,6 +139,13 @@ jobs:
           test -x ../app/mailsync
           file ../app/mailsync | grep -q arm64
 
+      # 默认 preflight 跑在编译 mailsync 之前，所以跨进程数据矩阵只能放在这里：
+      # 它用刚构建出来的 mailsync 和 SQLCipher addon 做 Electron↔mailsync 双向
+      # 读写，缺少可执行文件会直接失败而不是跳过。
+      - name: SQLCipher cross-process matrix
+        working-directory: source
+        run: npm run test:sqlcipher-matrix
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
