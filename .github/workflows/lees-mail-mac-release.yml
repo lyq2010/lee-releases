@@ -152,6 +152,11 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-tls-negative
 
+      # 合成 IMAP 会话：登录与文件夹解析走完整往返，不需要真实邮箱账户。
+      - name: mailsync synthetic IMAP session
+        working-directory: source
+        run: npm run test:mailsync-imap-session
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
