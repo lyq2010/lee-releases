@@ -146,6 +146,12 @@ jobs:
         working-directory: source
         run: npm run test:sqlcipher-matrix
 
+      # 同样要用刚构建出来的 mailsync：起本地坏证书服务，验证 TLS 与 STARTTLS
+      # 两条路径都拒绝，且 STARTTLS 失败前不会把认证数据明文发出去。
+      - name: mailsync TLS negative checks
+        working-directory: source
+        run: npm run test:mailsync-tls-negative
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
