@@ -157,6 +157,17 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-imap-session
 
+      # 真实 sync 会话：并发开库、IMAP 断线重连、SMTP 投递、SIGTERM 有界退出。
+      - name: mailsync real sync session
+        working-directory: source
+        run: npm run test:mailsync-sync-session
+
+      # 确认丢失时不得重复发信：服务端收下正文不回 250，杀进程后重启，
+      # 断言收件人只收到一份。
+      - name: mailsync no duplicate send
+        working-directory: source
+        run: npm run test:mailsync-no-duplicate-send
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
