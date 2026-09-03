@@ -174,6 +174,11 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-duplicate-task-send
 
+      # 启动期遇到外部写锁必须等待，不得直接抛 database is locked。
+      - name: mailsync busy timeout
+        working-directory: source
+        run: npm run test:mailsync-busy-timeout
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
