@@ -168,6 +168,12 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-no-duplicate-send
 
+      # 另一种形态：同一封草稿被排出两个各自独立的发送任务。2026-09-03 实机事故
+      # 就是这个形态——上面那条覆盖不到，因为它防的是同一个任务被重跑。
+      - name: mailsync duplicate task send
+        working-directory: source
+        run: npm run test:mailsync-duplicate-task-send
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
