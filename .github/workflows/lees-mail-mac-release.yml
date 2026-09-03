@@ -16,7 +16,7 @@ on:
         default: true
         type: boolean
       run_extended_preflight:
-        description: '额外执行 test:preflight:extended（bundle 实建 + Playwright 冒烟；CI 无 golden fixture 时部分用例 skip）'
+        description: '执行 test:preflight:extended（bundle 实建 + Playwright 冒烟；使用仓库内纯合成 fixture，缺件即失败）'
         required: false
         default: false
         type: boolean
@@ -103,6 +103,10 @@ jobs:
         working-directory: source
         run: npm run postinstall
 
+      - name: Review npm vulnerabilities
+        working-directory: source
+        run: npm run test:npm-vulnerabilities
+
       - name: Preflight
         if: ${{ !inputs.run_extended_preflight }}
         working-directory: source
@@ -173,6 +177,12 @@ jobs:
       - name: mailsync duplicate task send
         working-directory: source
         run: npm run test:mailsync-duplicate-task-send
+
+      # SMTP 连接建立但 DATA 尚未开始时崩溃，旧任务必须进入结果未知状态；
+      # 人工重试的新任务仍必须可投递，不能被旧的裸 marker 永久阻断。
+      - name: mailsync pre-DATA crash manual retry
+        working-directory: source
+        run: npm run test:mailsync-send-retry-after-pre-data-crash
 
       # 启动期遇到外部写锁必须等待，不得直接抛 database is locked。
       - name: mailsync busy timeout
