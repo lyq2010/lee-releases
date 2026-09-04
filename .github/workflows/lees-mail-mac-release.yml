@@ -166,6 +166,18 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-sync-session
 
+      # 官人遇到过「加附件后点击发送无反应」的回归。这里从产品 LMF2 附件落盘开始，
+      # 跑真实 SendDraftTask，并逐字节核对 SMTP MIME 中的出站附件。
+      - name: mailsync outbound attachment send
+        working-directory: source
+        run: npm run test:mailsync-send-attachment
+
+      # SMTP 故意声明可接受 128 MiB，确认正文和普通附件合计超过 32 MiB 时是产品
+      # 自己在 MIME 物化前明确拒绝，不依赖服务端 SIZE，也不把 worker 卡死。
+      - name: mailsync outbound source size limit
+        working-directory: source
+        run: npm run test:mailsync-send-size-limit
+
       # 确认丢失时不得重复发信：服务端收下正文不回 250，杀进程后重启，
       # 断言收件人只收到一份。
       - name: mailsync no duplicate send
