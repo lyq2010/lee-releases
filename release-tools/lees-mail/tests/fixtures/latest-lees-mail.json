@@ -1,0 +1,13 @@
+{
+  "version": "1.2.3",
+  "platform": "windows-x86_64",
+  "package": "LeesMail_1.2.3_x64-setup.exe",
+  "url": "https://github.example/releases/LeesMail_1.2.3_x64-setup.exe",
+  "sha256": "9752EB62A6845A78A9E2EAEB4A6EB2D93A1B654EE8665F71D516CFACA3E7CF57",
+  "size": 6,
+  "certificateThumbprint": "ABCD",
+  "msixPackage": "LeesMail_1.2.3_x64.msix",
+  "msixSha256": "45ECC99E5C23A54B60F11D0124F2BE6BD69DFE772AABA2388097D0DAB7BDC034",
+  "msixSize": 5,
+  "sourceArchive": "lees-mail_1.2.3_source.zip"
+}

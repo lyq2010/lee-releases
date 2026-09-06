@@ -7,25 +7,12 @@ on:
         description: "Lee's Mail private source tag (for example v1.0.0)"
         required: true
         type: string
-      # Microsoft Store publishing is paused. Restore these inputs only when the
-      # Store release channel is resumed.
-      # store_package_version:
-      #   description: "Partner Center package version from the same source tag (for example 1.0.0.0)"
-      #   required: true
-      #   type: string
-      # store_state:
-      #   description: "Current state of the matching Microsoft Store submission"
-      #   required: true
-      #   type: choice
-      #   options:
-      #     - published_or_scheduled
-      #     - parallel_authorized
 
 permissions:
   contents: read
 
 concurrency:
-  group: lees-mail-release-${{ github.ref }}-${{ inputs.tag || github.ref_name }}
+  group: lees-mail-release
   cancel-in-progress: false
 
 jobs:
@@ -35,43 +22,37 @@ jobs:
       contents: write
     env:
       SOURCE_REPO: lyq2010/lees-mail
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
+      MSBUILDDISABLENODEREUSE: "1"
     outputs:
-      source_tag: ${{ steps.tags.outputs.source_tag }}
       public_tag: ${{ steps.tags.outputs.public_tag }}
-      version: ${{ steps.tags.outputs.version }}
-      # store_state: ${{ steps.tags.outputs.store_state }}
     steps:
       - name: Resolve and validate tags
         id: tags
         shell: pwsh
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          $sourceTag = '${{ inputs.tag }}'
+          $sourceTag = $env:INPUT_TAG.Trim()
           $publicTag = "lees-mail-$sourceTag"
           if ($sourceTag -notmatch '^v\d+\.\d+\.\d+(\.\d+)?$') { throw "Invalid source tag: $sourceTag" }
-          if ($publicTag -ne "lees-mail-$sourceTag") { throw "Invalid public tag: $publicTag" }
           $version = $sourceTag.Substring(1)
           $packageVersion = if ($version.Split('.').Length -eq 3) { "$version.0" } else { $version }
-          # Microsoft Store publishing is paused. Restore this validation only
-          # when Store and GitHub releases are coupled again.
-          # $storePackageVersion = '${{ inputs.store_package_version }}'.Trim()
-          # if ($storePackageVersion -ne $packageVersion) {
-          #   throw "Store package version $storePackageVersion does not match source package version $packageVersion"
-          # }
-          # $storeState = '${{ inputs.store_state }}'
-          # if ($storeState -notin @('published_or_scheduled', 'parallel_authorized')) {
-          #   throw "Invalid Store submission state: $storeState"
-          # }
           "source_tag=$sourceTag" >> $env:GITHUB_OUTPUT
           "public_tag=$publicTag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "package_version=$packageVersion" >> $env:GITHUB_OUTPUT
-          # "store_state=$storeState" >> $env:GITHUB_OUTPUT
 
       - name: Checkout public release tooling
         uses: actions/checkout@v7
         with:
           path: release-repo
           persist-credentials: false
+
+      - name: Test release tooling
+        working-directory: release-repo/release-tools/lees-mail
+        shell: pwsh
+        run: python -B -m unittest discover -s tests -v
 
       - name: Create private source read token
         id: source-token
@@ -133,7 +114,8 @@ jobs:
         shell: pwsh
         run: npm install --global pnpm@11.9.0
 
-      - name: Validate Lee's Mail release secrets
+      - name: Prepare Lee's Mail private build
+        id: prepare
         shell: pwsh
         env:
           OUTLOOK_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
@@ -142,87 +124,15 @@ jobs:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           SIGNING_PFX_BASE64: ${{ secrets.LEESMAIL_SIGNING_PFX_BASE64 }}
           SIGNING_PFX_PASSWORD: ${{ secrets.LEESMAIL_SIGNING_PFX_PASSWORD }}
-        run: |
-          if ($env:OUTLOOK_CLIENT_ID -notmatch '^[0-9a-fA-F-]{36}$') { throw 'LEESMAIL_OUTLOOK_CLIENT_ID is missing or malformed' }
-          if ($env:GMAIL_CLIENT_ID -notmatch '^[0-9]+-[a-zA-Z0-9_-]+\.apps\.googleusercontent\.com$') { throw 'LEESMAIL_GMAIL_CLIENT_ID is missing or malformed' }
-          if ([string]::IsNullOrWhiteSpace($env:GMAIL_CLIENT_SECRET)) { throw 'LEESMAIL_GMAIL_CLIENT_SECRET is missing' }
-          $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
-          if (!$cosBase.Contains('://')) { $cosBase = "https://$cosBase" }
-          $cosUri = $null
-          if (![Uri]::TryCreate($cosBase, [UriKind]::Absolute, [ref]$cosUri) -or $cosUri.Scheme -ne 'https') { throw 'COS_PUBLIC_BASE_URL is missing or malformed' }
-          if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_BASE64)) { throw 'LEESMAIL_SIGNING_PFX_BASE64 is missing' }
-          if ([string]::IsNullOrWhiteSpace($env:SIGNING_PFX_PASSWORD)) { throw 'LEESMAIL_SIGNING_PFX_PASSWORD is missing' }
-
-      - name: Import Lee's Mail signing certificate
-        id: certificate
-        shell: pwsh
-        env:
-          SIGNING_PFX_BASE64: ${{ secrets.LEESMAIL_SIGNING_PFX_BASE64 }}
-          SIGNING_PFX_PASSWORD: ${{ secrets.LEESMAIL_SIGNING_PFX_PASSWORD }}
-        run: |
-          $pfxPath = Join-Path $env:RUNNER_TEMP 'lees-mail-signing.pfx'
-          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
-          $securePassword = ConvertTo-SecureString $env:SIGNING_PFX_PASSWORD -AsPlainText -Force
-          $certificate = Import-PfxCertificate -FilePath $pfxPath -Password $securePassword -CertStoreLocation Cert:\CurrentUser\My -Exportable
-          if (!$certificate.HasPrivateKey) { throw "Imported Lee's Mail certificate has no private key" }
-          if ($certificate.Subject -ne 'CN=Lee') { throw "Unexpected certificate subject: $($certificate.Subject)" }
-          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
-          "pfx_path=$pfxPath" >> $env:GITHUB_OUTPUT
-
-      - name: Create private build configuration
-        working-directory: source
-        shell: pwsh
-        env:
-          OUTLOOK_CLIENT_ID: ${{ secrets.LEESMAIL_OUTLOOK_CLIENT_ID }}
-          GMAIL_CLIENT_ID: ${{ secrets.LEESMAIL_GMAIL_CLIENT_ID }}
-          GMAIL_CLIENT_SECRET: ${{ secrets.LEESMAIL_GMAIL_CLIENT_SECRET }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-          CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
-        run: |
-          $cosBase = $env:COS_PUBLIC_BASE_URL.Trim().TrimEnd('/')
-          if (!$cosBase.Contains('://')) { $cosBase = "https://$cosBase" }
-          $cosManifest = "$cosBase/latest-lees-mail.json"
-          $content = @"
-          <Project>
-            <PropertyGroup>
-              <LeesMailOutlookClientId>$env:OUTLOOK_CLIENT_ID</LeesMailOutlookClientId>
-              <LeesMailGmailClientId>$env:GMAIL_CLIENT_ID</LeesMailGmailClientId>
-              <LeesMailGmailClientSecret>$env:GMAIL_CLIENT_SECRET</LeesMailGmailClientSecret>
-              <LeesMailCosUpdateManifestUrl>$cosManifest</LeesMailCosUpdateManifestUrl>
-              <PackageCertificateThumbprint>$env:CERTIFICATE_THUMBPRINT</PackageCertificateThumbprint>
-            </PropertyGroup>
-          </Project>
-          "@
-          [IO.File]::WriteAllText('LeesMail.Private.props', $content, [Text.UTF8Encoding]::new($false))
-
-      - name: Verify source version
-        working-directory: source
-        shell: pwsh
-        env:
           PACKAGE_VERSION: ${{ steps.tags.outputs.package_version }}
         run: |
-          [xml]$manifest = Get-Content -Raw -Encoding UTF8 LeesMail.Mail.WinUI/Package.appxmanifest
-          $actual = [string]$manifest.Package.Identity.Version
-          if ($actual -ne $env:PACKAGE_VERSION) { throw "Source package version mismatch: $actual != $env:PACKAGE_VERSION" }
-          if ([Version]$actual -ge [Version]'1.2.21.0') {
-            $requiredSources = @(
-              'LeesMail.LargeAttachments/LeesMail.LargeAttachments.csproj',
-              'large-attachment-web/package.json',
-              'tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj'
-            )
-            foreach ($requiredSource in $requiredSources) {
-              if (!(Test-Path -LiteralPath $requiredSource -PathType Leaf)) {
-                throw "Required large-attachment release source is missing: $requiredSource"
-              }
-            }
-          }
+          & release-repo/release-tools/lees-mail/Prepare-Build.ps1 `
+            -SourceRoot source `
+            -PackageVersion $env:PACKAGE_VERSION
 
       - name: Restore .NET projects serially
         working-directory: source
         shell: pwsh
-        env:
-          DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
-          MSBUILDDISABLENODEREUSE: "1"
         run: |
           function Invoke-RestoreWithRetry([string]$Project, [string[]]$ExtraArgs = @()) {
             for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -252,31 +162,17 @@ jobs:
       - name: Test Lee's Mail core
         working-directory: source
         shell: pwsh
-        env:
-          DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
-          MSBUILDDISABLENODEREUSE: "1"
         run: dotnet test LeesMail.Core.Tests/LeesMail.Core.Tests.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 --logger "console;verbosity=minimal"
 
       - name: Test Lee's Mail view models
         working-directory: source
         shell: pwsh
-        env:
-          DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
-          MSBUILDDISABLENODEREUSE: "1"
         run: dotnet test LeesMail.Mail.ViewModels.Tests/LeesMail.Mail.ViewModels.Tests.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64 --logger "console;verbosity=minimal"
-
-      - name: Check translation resources
-        working-directory: source
-        shell: pwsh
-        run: python tools/prune_translation_resources.py --check
 
       - name: Build large attachment E2E tool (offline)
         if: ${{ hashFiles('source/tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj') != '' }}
         working-directory: source
         shell: pwsh
-        env:
-          DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
-          MSBUILDDISABLENODEREUSE: "1"
         run: dotnet build tools/LeesMail.LargeAttachments.E2E/LeesMail.LargeAttachments.E2E.csproj -c Release --no-restore -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:Platform=x64
 
       - name: Test large attachment static downloader (offline)
@@ -285,10 +181,10 @@ jobs:
         shell: pwsh
         run: npm test --prefix large-attachment-web
 
-      - name: Audit XAML automation IDs
+      - name: Run Lee's Mail UI quality gates
         working-directory: source
         shell: pwsh
-        run: ./scripts/audit-xaml-automationids.ps1
+        run: ./scripts/verify-ui-quality.ps1
 
       - name: Test Cloudflare tracking worker
         working-directory: source/tracking-worker
@@ -353,168 +249,39 @@ jobs:
         env:
           VERSION: ${{ steps.tags.outputs.version }}
           PACKAGE_VERSION: ${{ steps.tags.outputs.package_version }}
-          CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
+          CERTIFICATE_THUMBPRINT: ${{ steps.prepare.outputs.thumbprint }}
         run: |
-          $package = @(Get-ChildItem -LiteralPath artifacts/msix -Recurse -File -Filter *.msix)
-          if ($package.Count -ne 1) { throw "Expected exactly one MSIX, found $($package.Count)" }
-
-          $inputDirectory = [IO.Path]::GetFullPath('artifacts/installer-input')
-          $outputDirectory = [IO.Path]::GetFullPath('artifacts/installer')
-          New-Item -ItemType Directory -Force $inputDirectory, $outputDirectory | Out-Null
-          Copy-Item -LiteralPath $package[0].FullName -Destination "$inputDirectory/LeesMail.msix" -Force
-          Export-Certificate -Cert "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT" -FilePath "$inputDirectory/LeesMail_CN-Lee.cer" -Force | Out-Null
-          Copy-Item -LiteralPath ../release-repo/release-tools/lees-mail-installer/InstallLeesMail.ps1 -Destination "$inputDirectory/InstallLeesMail.ps1" -Force
-          $languageFile = "$inputDirectory/ChineseSimplified.isl"
-          $languageUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/7fc483339b6f5b531eb4c0c504a8026877c9142f/Files/Languages/ChineseSimplified.isl'
-          Invoke-WebRequest -Uri $languageUrl -OutFile $languageFile
-          $languageHash = (Get-FileHash -LiteralPath $languageFile -Algorithm SHA256).Hash
-          if ($languageHash -ne '6753BE2C5E2740D859900FD902824DB2EC568DA5C5B52486524C9762D778B0B0') {
-            throw "Inno Setup Chinese language file hash mismatch: $languageHash"
-          }
-
-          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          $definition = [IO.Path]::GetFullPath('../release-repo/release-tools/lees-mail-installer/LeesMailInstaller.iss')
-          if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'Inno Setup compiler is missing from the runner' }
-          & $compiler "/DAppVersion=$env:VERSION" "/DSourcePath=$inputDirectory" "/DOutputPath=$outputDirectory" $definition
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
-
-          $setup = @(Get-ChildItem -LiteralPath $outputDirectory -File -Filter *.exe)
-          if ($setup.Count -ne 1) { throw "Expected exactly one setup executable, found $($setup.Count)" }
-          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -File |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (!$signTool) { throw 'SignTool is missing from the runner' }
-          & $signTool.FullName sign /fd SHA256 /sha1 $env:CERTIFICATE_THUMBPRINT /s My $setup[0].FullName
-          if ($LASTEXITCODE -ne 0) { throw "Setup signing failed with exit code $LASTEXITCODE" }
-          $setupSignature = Get-AuthenticodeSignature -LiteralPath $setup[0].FullName
-          if (!$setupSignature.SignerCertificate -or $setupSignature.SignerCertificate.Thumbprint -ne $env:CERTIFICATE_THUMBPRINT) {
-            throw "Setup signer does not match the configured Lee's Mail certificate"
-          }
-
-          $logPath = Join-Path $env:RUNNER_TEMP 'lees-mail-setup.log'
-          $process = Start-Process -FilePath $setup[0].FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$logPath" -Wait -PassThru
-          if ($process.ExitCode -ne 0) {
-            if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 80 }
-            throw "Lee's Mail setup verification failed with exit code $($process.ExitCode)"
-          }
-          $installed = @(Get-AppxPackage -Name LeesMail | Where-Object { $_.Version -eq $env:PACKAGE_VERSION })
-          if ($installed.Count -ne 1) { throw "Lee's Mail setup did not install package version $env:PACKAGE_VERSION" }
-          $installed | Remove-AppxPackage
-          if (Get-AppxPackage -Name LeesMail) { throw "Lee's Mail setup verification package cleanup failed" }
+          & ../release-repo/release-tools/lees-mail/Build-AndVerifyInstaller.ps1 `
+            -SourceRoot . `
+            -MsixDirectory artifacts/msix `
+            -OutputDirectory artifacts/installer `
+            -InstallerDefinition ../release-repo/release-tools/lees-mail-installer/LeesMailInstaller.iss `
+            -InstallScript ../release-repo/release-tools/lees-mail-installer/InstallLeesMail.ps1 `
+            -Version $env:VERSION `
+            -PackageVersion $env:PACKAGE_VERSION `
+            -CertificateThumbprint $env:CERTIFICATE_THUMBPRINT
 
       - name: Stage and verify release files
-        id: package
         working-directory: source
         shell: pwsh
         env:
           VERSION: ${{ steps.tags.outputs.version }}
           SOURCE_TAG: ${{ steps.tags.outputs.source_tag }}
           PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
-          CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
+          CERTIFICATE_THUMBPRINT: ${{ steps.prepare.outputs.thumbprint }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
-          $package = @(Get-ChildItem -LiteralPath artifacts/msix -Recurse -File -Filter *.msix)
-          if ($package.Count -ne 1) { throw "Expected exactly one MSIX, found $($package.Count)" }
-          $signature = Get-AuthenticodeSignature -LiteralPath $package[0].FullName
-          if (!$signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $env:CERTIFICATE_THUMBPRINT) {
-            throw "MSIX signer does not match the configured Lee's Mail certificate"
-          }
-
-          $stage = 'release-stage'
-          New-Item -ItemType Directory -Force $stage | Out-Null
-          $msixName = "LeesMail_${env:VERSION}_x64.msix"
-          $packageName = "LeesMail_${env:VERSION}_x64-setup.exe"
-          $certificateName = 'LeesMail_CN-Lee.cer'
-          $sourceName = "lees-mail_${env:VERSION}_source.zip"
-          $installer = @(Get-ChildItem -LiteralPath artifacts/installer -File -Filter *.exe)
-          if ($installer.Count -ne 1) { throw "Expected exactly one setup executable, found $($installer.Count)" }
-          Copy-Item -LiteralPath $installer[0].FullName -Destination "$stage/$packageName" -Force
-          Copy-Item -LiteralPath $package[0].FullName -Destination "$stage/$msixName" -Force
-          Export-Certificate -Cert "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT" -FilePath "$stage/$certificateName" -Force | Out-Null
-          git archive --format=zip --output "$stage/$sourceName" $env:SOURCE_TAG
-          if ($LASTEXITCODE -ne 0) { throw 'Source archive creation failed' }
-
-          $publishedPackage = Get-Item -LiteralPath "$stage/$packageName"
-          $publishedMsix = Get-Item -LiteralPath "$stage/$msixName"
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publishedPackage.FullName).Hash
-          $msixHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $publishedMsix.FullName).Hash
-          $base = "https://github.com/${{ github.repository }}/releases/download/$env:PUBLIC_TAG"
-          $manifest = [ordered]@{
-            version = $env:VERSION
-            platform = 'windows-x86_64'
-            package = $packageName
-            url = "$base/$packageName"
-            sha256 = $hash
-            size = $publishedPackage.Length
-            certificateThumbprint = $env:CERTIFICATE_THUMBPRINT
-            msixPackage = $msixName
-            msixSha256 = $msixHash
-            msixSize = $publishedMsix.Length
-            sourceArchive = $sourceName
-          }
-          [IO.File]::WriteAllText(
-            "$stage/latest-lees-mail.json",
-            ($manifest | ConvertTo-Json -Depth 3) + [Environment]::NewLine,
-            [Text.UTF8Encoding]::new($false)
-          )
-          $changelog = Get-Content -LiteralPath 'CHANGELOG.md' -Encoding UTF8
-          $heading = "## v$env:VERSION "
-          $start = -1
-          for ($index = 0; $index -lt $changelog.Count; $index++) {
-            if ($changelog[$index].StartsWith($heading, [StringComparison]::Ordinal)) {
-              $start = $index
-              break
-            }
-          }
-          if ($start -lt 0) { throw "CHANGELOG entry not found for v$env:VERSION" }
-          $end = $changelog.Count
-          for ($index = $start + 1; $index -lt $changelog.Count; $index++) {
-            if ($changelog[$index].StartsWith('## ', [StringComparison]::Ordinal)) {
-              $end = $index
-              break
-            }
-          }
-          $changeLines = @($changelog | Select-Object -Skip ($start + 1) -First ($end - $start - 1))
-          $releaseChanges = ($changeLines -join [Environment]::NewLine).Trim()
-          if ([string]::IsNullOrWhiteSpace($releaseChanges)) {
-            throw "CHANGELOG entry for v$env:VERSION has no release notes"
-          }
-          # Microsoft Store publishing is paused. Restore the Store state text
-          # when the Store release channel is resumed.
-          # $storeStateDescription = if ('${{ steps.tags.outputs.store_state }}' -eq 'published_or_scheduled') {
-          #   '已发布或已安排发布'
-          # } else {
-          #   '已获授权与 GitHub 并行发布；认证结果单独跟踪'
-          # }
-          # Store-specific release-note lines are paused with the Store channel:
-          # - Microsoft Store is the primary installation entry.
-          # - The Store package version and certification state match this tag.
-          # - Store and self-signed packages use separate identities.
-          # - Store-only .msixupload files are never GitHub Release assets.
-          $notes = @"
-          # Lee's Mail $env:VERSION
-
-          Lee's Mail Windows x64 正式版。
-
-          ## 安装渠道
-
-          - 普通用户下载本 Release 的签名安装程序即可安装或更新 Lee's Mail。
-          - Cloudflare 翻译访问密钥不包含在安装包、源码归档或 Release 资产中；仅授权用户可在应用的翻译设置中配置。
-
-          ## 更新内容
-
-          $releaseChanges
-          ## 安装与校验
-
-          - 运行已签名的安装程序即可安装证书和 MSIX 软件包。
-
-          - 安装程序 SHA-256: ``$hash``
-          - MSIX SHA-256: ``$msixHash``
-          - 签名证书: ``$env:CERTIFICATE_THUMBPRINT``
-          - 已附带对应的 GPL-3.0 源码归档。
-          "@
-          [IO.File]::WriteAllText('artifacts/release-notes.md', $notes, [Text.UTF8Encoding]::new($false))
-          "package_name=$packageName" >> $env:GITHUB_OUTPUT
-          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          & ../release-repo/release-tools/lees-mail/Stage-Release.ps1 `
+            -SourceRoot . `
+            -MsixDirectory artifacts/msix `
+            -InstallerDirectory artifacts/installer `
+            -StageDirectory release-stage `
+            -NotesPath artifacts/release-notes.md `
+            -Version $env:VERSION `
+            -SourceTag $env:SOURCE_TAG `
+            -PublicTag $env:PUBLIC_TAG `
+            -CertificateThumbprint $env:CERTIFICATE_THUMBPRINT `
+            -Repository $env:RELEASE_REPOSITORY
 
       - name: Publish Lee's Mail Release
         uses: softprops/action-gh-release@v3
@@ -531,14 +298,14 @@ jobs:
         if: always()
         shell: pwsh
         env:
-          CERTIFICATE_THUMBPRINT: ${{ steps.certificate.outputs.thumbprint }}
-          PFX_PATH: ${{ steps.certificate.outputs.pfx_path }}
+          CERTIFICATE_THUMBPRINT: ${{ steps.prepare.outputs.thumbprint }}
         run: |
           if ($env:CERTIFICATE_THUMBPRINT -and (Test-Path "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT")) {
             Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT" -Force
           }
-          if ($env:PFX_PATH -and (Test-Path -LiteralPath $env:PFX_PATH)) {
-            Remove-Item -LiteralPath $env:PFX_PATH -Force
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'lees-mail-signing.pfx'
+          if (Test-Path -LiteralPath $pfxPath) {
+            Remove-Item -LiteralPath $pfxPath -Force
           }
           if (Test-Path -LiteralPath source/LeesMail.Private.props) {
             Remove-Item -LiteralPath source/LeesMail.Private.props -Force
@@ -550,9 +317,14 @@ jobs:
 
   cos-lees-mail-mirror:
     needs: build-lees-mail
-    if: ${{ needs.build-lees-mail.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          persist-credentials: false
+
       - name: Download Lee's Mail Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -563,111 +335,31 @@ jobs:
           gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
           test -s assets/latest-lees-mail.json
 
+      - name: Install Tencent COS client
+        run: python3 -m pip install --user cos-python-sdk-v5
+
       - name: Mirror Lee's Mail release to COS
         env:
-          VERSION: ${{ needs.build-lees-mail.outputs.version }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
           TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
           TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
           TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
-        run: |
-          set -euo pipefail
-          python3 -m pip install --user cos-python-sdk-v5
-          python3 - <<'PY'
-          import hashlib, json, os, sys, urllib.request
-          from pathlib import Path
-          from urllib.parse import urlparse
-          from qcloud_cos import CosConfig, CosS3Client
-
-          base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
-          if "://" not in base:
-              base = f"https://{base}"
-          parsed = urlparse(base)
-          if parsed.scheme != "https" or not parsed.netloc:
-              sys.exit(f"COS_PUBLIC_BASE_URL is invalid: {base}")
-          prefix = parsed.path.strip("/")
-          key = lambda name: f"{prefix}/{name}" if prefix else name
-          client = CosS3Client(CosConfig(
-              Region=os.environ["TENCENT_COS_REGION"].strip(),
-              SecretId=os.environ["TENCENT_COS_SECRET_ID"].strip(),
-              SecretKey=os.environ["TENCENT_COS_SECRET_KEY"].strip(),
-              Scheme="https",
-          ))
-          bucket = os.environ["TENCENT_COS_BUCKET"].strip()
-          manifest_path = Path("assets/latest-lees-mail.json")
-          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          package = Path(urlparse(manifest["url"]).path).name
-          package_path = Path("assets") / package
-          msix_package = manifest["msixPackage"]
-          msix_path = Path("assets") / msix_package
-          if not package_path.is_file():
-              sys.exit(f"Missing Lee's Mail package: {package_path}")
-          if not msix_path.is_file():
-              sys.exit(f"Missing Lee's Mail MSIX: {msix_path}")
-          actual_hash = hashlib.sha256(package_path.read_bytes()).hexdigest().upper()
-          if actual_hash != manifest["sha256"].upper() or package_path.stat().st_size != manifest["size"]:
-              sys.exit("Lee's Mail package hash or size mismatch")
-          actual_msix_hash = hashlib.sha256(msix_path.read_bytes()).hexdigest().upper()
-          if actual_msix_hash != manifest["msixSha256"].upper() or msix_path.stat().st_size != manifest["msixSize"]:
-              sys.exit("Lee's Mail MSIX hash or size mismatch")
-          client.upload_file(Bucket=bucket, LocalFilePath=str(package_path), Key=key(package), EnableMD5=False)
-          client.upload_file(Bucket=bucket, LocalFilePath=str(msix_path), Key=key(msix_package), EnableMD5=False)
-          manifest["url"] = f"{base}/{package}"
-          body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-          client.put_object(Bucket=bucket, Body=body, Key=key("latest-lees-mail.json"), ContentType="application/json; charset=utf-8")
-
-          with urllib.request.urlopen(f"{base}/latest-lees-mail.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
-              published = json.loads(response.read().decode("utf-8"))
-          if published.get("version") != os.environ["VERSION"] or published.get("platform") != "windows-x86_64":
-              sys.exit("COS latest-lees-mail.json mismatch")
-          if (
-              published.get("sha256") != actual_hash
-              or published.get("size") != package_path.stat().st_size
-              or published.get("msixPackage") != msix_package
-              or published.get("msixSha256") != actual_msix_hash
-              or published.get("msixSize") != msix_path.stat().st_size
-              or not published.get("certificateThumbprint")
-          ):
-              sys.exit("COS Lee's Mail integrity fields mismatch")
-          for public_url in (f"{base}/{package}", f"{base}/{msix_package}"):
-              request = urllib.request.Request(public_url, method="HEAD", headers={"Cache-Control": "no-cache"})
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  if response.status != 200:
-                      sys.exit(f"COS Lee's Mail asset is not publicly available: {public_url}")
-
-          current_key = key(package)
-          current_msix_key = key(msix_package)
-          marker = ""
-          while True:
-              kwargs = {"Bucket": bucket, "Prefix": key("LeesMail_"), "MaxKeys": 1000}
-              if marker:
-                  kwargs["Marker"] = marker
-              listed = client.list_objects(**kwargs)
-              for obj in listed.get("Contents", []) or []:
-                  obj_key = obj.get("Key", "")
-                  is_old_setup = obj_key.endswith("_x64-setup.exe") and obj_key != current_key
-                  is_old_msix = obj_key.endswith("_x64.msix") and obj_key != current_msix_key
-                  if is_old_setup or is_old_msix:
-                      client.delete_object(Bucket=bucket, Key=obj_key)
-                      print(f"Deleted old Lee's Mail mirror: {obj_key}")
-              if listed.get("IsTruncated") in ("true", True):
-                  marker = listed.get("NextMarker") or ""
-                  if marker:
-                      continue
-              break
-
-          print("COS Lee's Mail mirror complete")
-          PY
+        run: python3 release-repo/release-tools/lees-mail/mirror_release.py cos
 
   r2-lees-mail-mirror:
     needs: build-lees-mail
-    if: ${{ needs.build-lees-mail.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       R2_BUCKET: packing-list-releases
       R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
     steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          persist-credentials: false
+
       - name: Download Lee's Mail Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -680,99 +372,5 @@ jobs:
 
       - name: Mirror Lee's Mail release to R2
         env:
-          VERSION: ${{ needs.build-lees-mail.outputs.version }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          account_id="$(
-            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              https://api.cloudflare.com/client/v4/accounts |
-            python3 -c 'import json, sys; data=json.load(sys.stdin); accounts=data.get("result") or []; assert data.get("success") and accounts; print(accounts[0]["id"])'
-          )"
-          export CLOUDFLARE_ACCOUNT_ID="$account_id"
-          mapfile -t packages < <(python3 - <<'PY'
-          import hashlib, json, os
-          from pathlib import Path
-          from urllib.parse import urlparse
-
-          base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
-          path = Path("assets/latest-lees-mail.json")
-          manifest = json.loads(path.read_text(encoding="utf-8"))
-          package = Path(urlparse(manifest["url"]).path).name
-          package_path = Path("assets") / package
-          msix_package = manifest["msixPackage"]
-          msix_path = Path("assets") / msix_package
-          if not package_path.is_file() or not msix_path.is_file():
-              raise SystemExit("Lee's Mail release assets are incomplete")
-          if (
-              hashlib.sha256(package_path.read_bytes()).hexdigest().upper() != manifest["sha256"].upper()
-              or package_path.stat().st_size != manifest["size"]
-          ):
-              raise SystemExit("Lee's Mail package hash or size mismatch")
-          if (
-              hashlib.sha256(msix_path.read_bytes()).hexdigest().upper() != manifest["msixSha256"].upper()
-              or msix_path.stat().st_size != manifest["msixSize"]
-          ):
-              raise SystemExit("Lee's Mail MSIX hash or size mismatch")
-          manifest["url"] = f"{base}/{package}"
-          path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          print(package)
-          print(msix_package)
-          PY
-          )
-          package="${packages[0]}"
-          msix_package="${packages[1]}"
-          test -s "assets/${package}"
-          test -s "assets/${msix_package}"
-          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${package}" --file "assets/${package}" --remote
-          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/${msix_package}" --file "assets/${msix_package}" --remote
-          npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-mail.json" --file assets/latest-lees-mail.json --content-type "application/json; charset=utf-8" --remote
-          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-mail.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json, sys; data=json.load(sys.stdin); expected=json.load(open("assets/latest-lees-mail.json", encoding="utf-8")); fields=("version","platform","package","sha256","size","certificateThumbprint","msixPackage","msixSha256","msixSize"); assert all(data.get(field) == expected.get(field) for field in fields)'
-          curl -fsSI -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/${package}?verify=${GITHUB_RUN_ID}" >/dev/null
-          curl -fsSI -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/${msix_package}?verify=${GITHUB_RUN_ID}" >/dev/null
-          python3 - "$account_id" "$package" "$msix_package" <<'PY'
-          import json, os, sys, urllib.parse, urllib.request
-
-          account_id, current_setup, current_msix = sys.argv[1:4]
-          bucket = os.environ["R2_BUCKET"].strip()
-          token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-          prefix = "LeesMail_"
-
-          def request(method, path, params=None):
-              url = f"https://api.cloudflare.com/client/v4{path}"
-              if params:
-                  url = f"{url}?{urllib.parse.urlencode(params)}"
-              req = urllib.request.Request(url, method=method, headers={"Authorization": f"Bearer {token}"})
-              with urllib.request.urlopen(req, timeout=30) as response:
-                  data = json.loads(response.read().decode("utf-8"))
-              if not data.get("success"):
-                  raise SystemExit(json.dumps(data, ensure_ascii=False))
-              return data
-
-          bucket_path = f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
-          cursor = ""
-          stale = []
-          while True:
-              params = {"prefix": prefix, "per_page": "1000"}
-              if cursor:
-                  params["cursor"] = cursor
-              data = request("GET", bucket_path, params)
-              for obj in data.get("result") or []:
-                  key = obj.get("key", "")
-                  is_old_setup = key.endswith("_x64-setup.exe") and key != current_setup
-                  is_old_msix = key.endswith("_x64.msix") and key != current_msix
-                  if is_old_setup or is_old_msix:
-                      stale.append(key)
-              info = data.get("result_info") or {}
-              if not info.get("is_truncated"):
-                  break
-              cursor = info.get("cursor") or ""
-              if not cursor:
-                  raise SystemExit("R2 listing was truncated without a cursor")
-          for key in stale:
-              request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
-              print(f"Deleted old Lee's Mail mirror: {key}")
-          PY
-          echo "R2 Lee's Mail mirror complete"
+        run: python3 release-repo/release-tools/lees-mail/mirror_release.py r2
