@@ -15,7 +15,6 @@
 
 主要能力：
 
-- 原生工具箱提供文本处理、计算器、批量重命名和快捷启动器等本地工具；
 - Lee's Mail 提供 Windows 与 macOS 原生邮件客户端；
 - 各产品使用独立更新通道，并校验更新包来源、哈希和签名。
 
@@ -23,7 +22,6 @@
 
 | 版本 | 适用系统 | 下载入口 | 安装文件 |
 |---|---|---|---|
-| Lee's Toolbox Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E5%B7%A5%E5%85%B7%E7%AE%B1%20Windows&expanded=true) | `lees-toolbox-windows_*_x64-setup.exe` |
 | Lee's 系统工具箱 | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
 | Lee’s Toolbox Mac | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee’s Toolbox Mac_*_macOS_arm64.dmg` |
 | Lee's Mail | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases/latest) | `LeesMail_*_x64-setup.exe` |
@@ -31,7 +29,6 @@
 
 ### 怎么选择
 
-- 使用 Windows 11，希望获得原生界面、较快启动和较低后台占用，可选择 Lee's Toolbox Windows。
 - 使用 Apple Silicon Mac，希望使用 SwiftUI 原生界面和原生业务引擎，可选择 Lee’s Toolbox Mac。
 - 使用 Apple Silicon Mac，希望使用独立的原生邮件客户端，可选择 Lee’s Mail Mac。
 - 各产品使用独立的应用身份、数据目录和更新通道，可以并行安装。
