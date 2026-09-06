@@ -1,0 +1,44 @@
+name: Lee's Mail R2 Remirror
+
+on:
+  workflow_dispatch:
+    inputs:
+      public_tag:
+        description: "Public release tag (for example lees-mail-v1.5.4)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lees-mail-r2-remirror
+  cancel-in-progress: false
+
+jobs:
+  r2-lees-mail-mirror:
+    runs-on: ubuntu-latest
+    env:
+      R2_BUCKET: packing-list-releases
+      R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          persist-credentials: false
+
+      - name: Download Lee's Mail Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ inputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-mail.json
+
+      - name: Mirror Lee's Mail release to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: python3 release-repo/release-tools/lees-mail/mirror_release.py r2

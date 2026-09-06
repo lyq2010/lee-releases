@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 import subprocess
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -27,6 +29,10 @@ PUBLIC_FIELDS = (
     "msixSha256",
     "msixSize",
 )
+# Cloudflare Bot Fight Mode rejects Python's default urllib User-Agent with 403.
+VERIFY_USER_AGENT = "Mozilla/5.0 (compatible; LeesMailReleaseVerify/1.0)"
+VERIFY_ATTEMPTS = 5
+VERIFY_RETRY_DELAY_SECONDS = 2.0
 
 
 def require_env(name: str) -> str:
@@ -89,23 +95,56 @@ def write_mirror_manifest(manifest: dict[str, Any], manifest_path: Path, base: s
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def open_public(url: str, *, method: str = "GET") -> Any:
+    request = urllib.request.Request(
+        url,
+        method=method,
+        headers={
+            "User-Agent": VERIFY_USER_AGENT,
+            "Cache-Control": "no-cache",
+        },
+    )
+    return urllib.request.urlopen(request, timeout=30)
+
+
 def verify_public(base: str, expected: dict[str, Any], package: Path, msix: Path) -> None:
     run_id = urllib.parse.quote(os.environ.get("GITHUB_RUN_ID", "manual"), safe="")
-    with urllib.request.urlopen(f"{base}/{MANIFEST_NAME}?verify={run_id}", timeout=30) as response:
-        published = json.loads(response.read().decode("utf-8"))
-    mismatches = [field for field in PUBLIC_FIELDS if published.get(field) != expected.get(field)]
-    if mismatches:
-        raise SystemExit(f"Published Lee's Mail manifest mismatch: {', '.join(mismatches)}")
+    manifest_url = f"{base}/{MANIFEST_NAME}?verify={run_id}"
+    last_error: Exception | None = None
 
-    for asset in (package, msix):
-        request = urllib.request.Request(
-            f"{base}/{asset.name}?verify={run_id}",
-            method="HEAD",
-            headers={"Cache-Control": "no-cache"},
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            if response.status != 200:
-                raise SystemExit(f"Lee's Mail mirror asset is not publicly available: {asset.name}")
+    for attempt in range(1, VERIFY_ATTEMPTS + 1):
+        try:
+            with open_public(manifest_url) as response:
+                published = json.loads(response.read().decode("utf-8"))
+            mismatches = [field for field in PUBLIC_FIELDS if published.get(field) != expected.get(field)]
+            if mismatches:
+                raise SystemExit(f"Published Lee's Mail manifest mismatch: {', '.join(mismatches)}")
+
+            for asset in (package, msix):
+                with open_public(f"{base}/{asset.name}?verify={run_id}", method="HEAD") as response:
+                    if response.status != 200:
+                        raise SystemExit(f"Lee's Mail mirror asset is not publicly available: {asset.name}")
+            return
+        except urllib.error.HTTPError as error:
+            last_error = error
+            if error.code not in {403, 404, 429, 500, 502, 503, 504} or attempt >= VERIFY_ATTEMPTS:
+                raise
+            print(
+                f"Public mirror verify attempt {attempt}/{VERIFY_ATTEMPTS} got HTTP {error.code}; "
+                f"retrying in {VERIFY_RETRY_DELAY_SECONDS:.0f}s"
+            )
+            time.sleep(VERIFY_RETRY_DELAY_SECONDS)
+        except TimeoutError as error:
+            last_error = error
+            if attempt >= VERIFY_ATTEMPTS:
+                raise
+            print(
+                f"Public mirror verify attempt {attempt}/{VERIFY_ATTEMPTS} timed out; "
+                f"retrying in {VERIFY_RETRY_DELAY_SECONDS:.0f}s"
+            )
+            time.sleep(VERIFY_RETRY_DELAY_SECONDS)
+
+    raise SystemExit(f"Public mirror verify failed after {VERIFY_ATTEMPTS} attempts: {last_error}")
 
 
 def mirror_cos(assets: Path) -> None:
