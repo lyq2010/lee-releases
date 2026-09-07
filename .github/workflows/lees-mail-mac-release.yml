@@ -143,6 +143,12 @@ jobs:
           test -x ../app/mailsync
           file ../app/mailsync | grep -q arm64
 
+      # 1.2.18 曾因 stdout 提示未 flush，父进程与 mailsync 在账号 JSON 握手处互等。
+      # 必须验证正式构建出的二进制，而不是只扫源码。
+      - name: mailsync startup handshake
+        working-directory: source
+        run: npm run test:mailsync-startup-handshake
+
       # 默认 preflight 跑在编译 mailsync 之前，所以跨进程数据矩阵只能放在这里：
       # 它用刚构建出来的 mailsync 和 SQLCipher addon 做 Electron↔mailsync 双向
       # 读写，缺少可执行文件会直接失败而不是跳过。
@@ -189,6 +195,12 @@ jobs:
       - name: mailsync duplicate task send
         working-directory: source
         run: npm run test:mailsync-duplicate-task-send
+
+      # 服务商可能自行保存 Sent。默认配置仍须安全 APPEND；账户显式关闭后普通邮件
+      # 必须零 APPEND，同时 metadata 与 multisend 仍保留 canonical 副本。
+      - name: mailsync sent-copy policy
+        working-directory: source
+        run: npm run test:mailsync-sent-copy
 
       # SMTP 连接建立但 DATA 尚未开始时崩溃，旧任务必须进入结果未知状态；
       # 人工重试的新任务仍必须可投递，不能被旧的裸 marker 永久阻断。
