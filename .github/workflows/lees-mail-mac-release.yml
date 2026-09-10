@@ -213,6 +213,13 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-busy-timeout
 
+      # 同一封草稿两次不带 id 的 SyncbackDraftTask 必须落在同一行：弹出撰写窗口会错过
+      # mailsync 分配 id 的 persist 事件，之后的保存没有 id；按算出的 id 更新而不是 INSERT，
+      # 否则撞 UNIQUE 让 worker 退出、发送按钮从此无反应（1.2.11 起就有的竞态）。
+      - name: mailsync draft resave without id
+        working-directory: source
+        run: npm run test:mailsync-draft-resave
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
