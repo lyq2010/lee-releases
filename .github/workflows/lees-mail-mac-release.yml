@@ -265,6 +265,7 @@ jobs:
         working-directory: source
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.LEESMAIL_MAC_MINISIGN_KEY }}
+          VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
           if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
@@ -280,9 +281,14 @@ jobs:
           chmod 600 "$key"
           # 私钥无密码，仍需喂一个空行给 minisign 的密码提示。
           # -H 生成预哈希签名，与客户端的验证方式一致。
-          printf '\n' | minisign -S -H -s "$key" -m app/dist/LeesMail.dmg
+          # 可信注释必须带 version= 与 file=（公开下载名），新客户端会与清单核对。
+          dmg_name="LeesMail-${VERSION}-arm64.dmg"
+          printf '\n' | minisign -S -H -s "$key" -m app/dist/LeesMail.dmg \
+            -t "version=${VERSION} file=${dmg_name}"
           rm -f "$key"
           test -f app/dist/LeesMail.dmg.minisig
+          grep -F "trusted comment: version=${VERSION} file=${dmg_name}" \
+            app/dist/LeesMail.dmg.minisig
 
       - name: Verify release artifacts
         working-directory: source
