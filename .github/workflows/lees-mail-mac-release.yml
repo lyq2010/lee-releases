@@ -220,6 +220,12 @@ jobs:
         working-directory: source
         run: npm run test:mailsync-draft-resave
 
+      # 1.2.20 及之前 native 把 ICS 的 Z/TZID 当机器本地时间写 Event.recurrenceStart/End；
+      # 修复只对之后重新同步的行生效，升级后须按 EVENT_BOUNDS_VERSION 键一次性重算旧行。
+      - name: mailsync event bounds migration
+        working-directory: source
+        run: npm run test:mailsync-event-bounds-migration
+
       - name: Build app, DMG and ZIP
         working-directory: source
         env:
