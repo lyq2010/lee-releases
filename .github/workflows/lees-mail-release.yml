@@ -284,15 +284,41 @@ jobs:
             -Repository $env:RELEASE_REPOSITORY
 
       - name: Publish Lee's Mail Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.tags.outputs.public_tag }}
-          name: Lee's Mail for Windows ${{ steps.tags.outputs.version }}
-          draft: false
-          prerelease: false
-          make_latest: true
-          files: source/release-stage/*
-          body_path: source/artifacts/release-notes.md
+        working-directory: source
+        timeout-minutes: 30
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $repo = $env:GITHUB_REPOSITORY
+          $tag = $env:PUBLIC_TAG
+          $files = @(Get-ChildItem -LiteralPath 'release-stage' -File | Sort-Object Length)
+          if ($files.Count -lt 5) {
+            throw "Expected at least 5 staged files, found $($files.Count)"
+          }
+
+          gh release delete $tag --repo $repo --yes
+          gh release create $tag --repo $repo --title "Lee's Mail for Windows $($env:VERSION)" --notes-file artifacts/release-notes.md --draft --latest=false
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $tag" }
+
+          foreach ($file in $files) {
+            $attempt = 0
+            while ($true) {
+              $attempt += 1
+              Write-Host "Uploading $($file.Name) (attempt $attempt, $($file.Length) bytes)"
+              gh release upload $tag --repo $repo --clobber $file.FullName
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -ge 5) { throw "Failed to upload $($file.Name) after $attempt attempts" }
+              Start-Sleep -Seconds (15 * $attempt)
+            }
+          }
+
+          gh release edit $tag --repo $repo --draft=false --latest=true
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish $tag" }
 
       - name: Clean private build material
         if: always()
