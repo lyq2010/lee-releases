@@ -136,7 +136,8 @@ jobs:
             gh release upload $env:TAG $asset.FullName --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw "Upload failed: $($asset.Name)" }
           }
-          gh release edit $env:TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=true
+          # 仓库 Latest 固定给 Lee's Mail for Windows，Emby 不要改这个指针。
+          gh release edit $env:TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=false
           if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
       - name: Clean signing material
         if: always()
