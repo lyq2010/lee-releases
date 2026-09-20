@@ -89,7 +89,7 @@ jobs:
         working-directory: source
         shell: pwsh
         run: |
-          dotnet test LeesEmby.slnx -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:RestoreLockedMode=true
+          dotnet test LeesEmby.slnx -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:RestoreLockedMode=true --filter "Category!=Gpu"
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
           python -B -m unittest discover -s tools/release/tests -v
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed' }
