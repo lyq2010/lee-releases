@@ -1,0 +1,203 @@
+# 此文件的部署位置：lyq2010/lee-releases/.github/workflows/lees-emby-release.yml
+name: Lee's Emby Windows Release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 私有源码标签，例如 v1.9.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: lees-emby-release
+  cancel-in-progress: false
+jobs:
+  build-lees-emby:
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    env:
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: "1"
+      MSBUILDDISABLENODEREUSE: "1"
+    outputs:
+      public_tag: ${{ steps.tags.outputs.public_tag }}
+    steps:
+      - name: Validate source tag
+        id: tags
+        shell: pwsh
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          $tag = $env:INPUT_TAG.Trim()
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$' -or ([version]$tag.Substring(1)).Build -ge 50) { throw 'Invalid tag' }
+          "source_tag=$tag" >> $env:GITHUB_OUTPUT
+          "public_tag=lees-emby-$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          ref: main
+          persist-credentials: false
+      - name: Create private source read token
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: lees-emby
+          permission-contents: read
+      - name: Checkout source tag
+        uses: actions/checkout@v7
+        with:
+          repository: lyq2010/lees-emby
+          ref: ${{ steps.tags.outputs.source_tag }}
+          path: source
+          token: ${{ steps.source-token.outputs.token }}
+          fetch-depth: 0
+      - name: Validate source and version
+        shell: pwsh
+        working-directory: source
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch main' }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Tag must be reachable from main' }
+          [xml]$props = Get-Content Directory.Build.props -Raw -Encoding UTF8
+          if ([string]$props.Project.PropertyGroup.Version -ne $env:VERSION) { throw 'Tag version mismatch' }
+          if ((Get-FileHash tools/release/mirror_release.py).Hash -ne (Get-FileHash ../release-repo/release-tools/lees-emby/mirror_release.py).Hash) { throw 'Release mirror tooling is not synchronized' }
+          if ((Get-FileHash tools/release/lees-emby-release.yml).Hash -ne (Get-FileHash ../release-repo/.github/workflows/lees-emby-release.yml).Hash) { throw 'Release workflow is not synchronized' }
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.401
+      - name: Prepare native dependencies and NSIS
+        working-directory: source
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.11 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          if (!(Get-Command 7z -ErrorAction SilentlyContinue) -and !(Test-Path -LiteralPath "$env:ProgramFiles\7-Zip\7z.exe")) {
+            choco install 7zip -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw '7-Zip installation failed' }
+          }
+          ./tools/release/Get-NativeDependencies.ps1
+      - name: Run tests serially
+        working-directory: source
+        shell: pwsh
+        run: |
+          dotnet test LeesEmby.slnx -m:1 -nr:false -p:BuildInParallel=false -p:UseSharedCompilation=false -p:RestoreLockedMode=true
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+          python -B -m unittest discover -s tools/release/tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Release tests failed' }
+      - name: Build signed EXE and update signature
+        shell: pwsh
+        working-directory: source
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.LEESEMBY_SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.LEESEMBY_SIGNING_PFX_PASSWORD }}
+          MINISIGN_KEY_BASE64: ${{ secrets.LEESEMBY_MINISIGN_KEY_BASE64 }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/lees-emby-signing.pfx", [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/lees-emby-minisign.key", [Convert]::FromBase64String($env:MINISIGN_KEY_BASE64))
+          ./tools/release/Build-Release.ps1 -CertificatePath "$env:RUNNER_TEMP/lees-emby-signing.pfx" -MinisignKeyPath "$env:RUNNER_TEMP/lees-emby-minisign.key" -CosPublicBaseUrl $env:COS_PUBLIC_BASE_URL
+      - name: Verify silent install and preserve data
+        working-directory: source
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: ./tools/release/Verify-Installer.ps1 -ReleaseDirectory "artifacts/release/$env:VERSION"
+      - name: Stage source archive and release notes
+        working-directory: source
+        shell: pwsh
+        env:
+          SOURCE_TAG: ${{ steps.tags.outputs.source_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: ./tools/release/Stage-Release.ps1 -SourceTag $env:SOURCE_TAG -AssetsDirectory "artifacts/release/$env:VERSION/assets" -ReleaseRepository $env:GITHUB_REPOSITORY
+      - name: Publish complete release
+        shell: pwsh
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tags.outputs.public_tag }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          $assets = @(Get-ChildItem "artifacts/release/$env:VERSION/assets" -File)
+          if ($assets.Count -ne 5) { throw 'Expected EXE, minisig, certificate, source archive and manifest' }
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY --json isDraft > $null 2>&1
+          if ($LASTEXITCODE -eq 0) { throw 'Release already exists; do not replace a published update' }
+          gh release create $env:TAG --repo $env:GITHUB_REPOSITORY --draft --latest=false --title "Lee's Emby $env:VERSION" --notes-file "artifacts/release/$env:VERSION/release-notes.md"
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release failed' }
+          foreach ($asset in $assets) {
+            gh release upload $env:TAG $asset.FullName --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "Upload failed: $($asset.Name)" }
+          }
+          gh release edit $env:TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=true
+          if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
+      - name: Clean signing material
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($name in @('lees-emby-signing.pfx', 'lees-emby-minisign.key')) {
+            $path = Join-Path $env:RUNNER_TEMP $name
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+          }
+  cos-lees-emby-mirror:
+    needs: build-lees-emby
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          ref: main
+          persist-credentials: false
+      - name: Download Lee's Emby Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-lees-emby.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-emby.json
+      - name: Install Tencent COS client
+        run: python3 -m pip install --user cos-python-sdk-v5
+      - name: Mirror Lee's Emby release to COS
+        env:
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: python3 release-repo/release-tools/lees-emby/mirror_release.py cos
+  r2-lees-emby-mirror:
+    needs: build-lees-emby
+    runs-on: ubuntu-latest
+    env:
+      R2_BUCKET: packing-list-releases
+      R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v7
+        with:
+          path: release-repo
+          ref: main
+          persist-credentials: false
+      - name: Download Lee's Emby Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.build-lees-emby.outputs.public_tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$PUBLIC_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          test -s assets/latest-lees-emby.json
+      - name: Mirror Lee's Emby release to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: python3 release-repo/release-tools/lees-emby/mirror_release.py r2
