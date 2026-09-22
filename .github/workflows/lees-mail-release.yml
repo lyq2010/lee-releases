@@ -95,7 +95,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.302
+          dotnet-version: 10.0.401
 
       - name: Restore NuGet package cache
         id: nuget-cache
