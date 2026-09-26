@@ -1,0 +1,56 @@
+# Deploy to lyq2010/lee-releases/.github/workflows/lees-music-mirrors.yml.
+name: Lee's Music mirrors
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published lees-music tag
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: lees-music-mirrors
+  cancel-in-progress: false
+jobs:
+  cos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: lyq2010/lees-music
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Download published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo lyq2010/lees-music --dir assets
+      - run: python3 -m pip install cos-python-sdk-v5
+      - name: Mirror and verify COS
+        env:
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+        run: python3 tools/release/mirror.py cos
+  r2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: lyq2010/lees-music
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - name: Download published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo lyq2010/lees-music --dir assets
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Mirror and verify R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: python3 tools/release/mirror.py r2
