@@ -15,7 +15,7 @@ jobs:
       id: source-token
       uses: actions/create-github-app-token@v3
       with:
-        app-id: ${{ secrets.SOURCE_APP_ID }}
+        client-id: ${{ secrets.SOURCE_APP_ID }}
         private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
         owner: lyq2010
         repositories: lees-music
@@ -85,7 +85,10 @@ jobs:
         arch: x86_64
         disk-size: 2048M
         working-directory: source
-        script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
+        script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain --info
+    - name: Show failed emulator test diagnostics
+      if: failure()
+      run: find app/build/outputs/androidTest-results -type f -name '*.xml' -print -exec cat {} \;
     - name: Restore signing material
       if: steps.existing.outputs.published != 'true'
       env:
@@ -141,7 +144,7 @@ jobs:
       id: source-token
       uses: actions/create-github-app-token@v3
       with:
-        app-id: ${{ secrets.SOURCE_APP_ID }}
+        client-id: ${{ secrets.SOURCE_APP_ID }}
         private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
         owner: lyq2010
         repositories: lees-music
@@ -176,7 +179,7 @@ jobs:
       id: source-token
       uses: actions/create-github-app-token@v3
       with:
-        app-id: ${{ secrets.SOURCE_APP_ID }}
+        client-id: ${{ secrets.SOURCE_APP_ID }}
         private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
         owner: lyq2010
         repositories: lees-music
