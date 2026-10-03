@@ -13,7 +13,7 @@
 ![专有许可](https://img.shields.io/badge/License-Proprietary-blue)
 ![Status](https://img.shields.io/badge/状态-正式版-8B7CF8)
 
-[下载版本](https://github.com/lyq2010/lee-releases/releases?q=lees-music) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=lees-music) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+[下载版本](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Music) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Music) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
 
 </div>
 
@@ -43,11 +43,13 @@
 
 ## 开始使用
 
-1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=lees-music) 下载 APK，安装到 Android 8.0 或更高版本的设备。
+1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Music) 下载 APK，安装到 Android 8.0 或更高版本的设备。
 2. 添加 Navidrome 服务器，填写地址与登录信息。
 3. 打开音乐库，选择喜欢的歌曲。
 
 当前提供正式版，支持 **Navidrome**；Emby、Plex 尚未接入。
+
+安装请选择发行版中的 `.apk`。GitHub 自动显示的 ZIP 与 tar.gz 是公开下载仓的文档和发布工具归档；音乐应用源码保存在私有仓。
 
 ## 音乐属于你
 
