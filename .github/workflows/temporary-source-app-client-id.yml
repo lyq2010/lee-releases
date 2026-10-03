@@ -1,0 +1,26 @@
+name: Temporary source App client ID lookup
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  identify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          APP_ID: ${{ secrets.SOURCE_APP_ID }}
+          APP_KEY: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+        with:
+          script: |
+            const crypto = require('node:crypto');
+            const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+            const now = Math.floor(Date.now() / 1000);
+            const unsigned = `${encode({alg:'RS256',typ:'JWT'})}.${encode({iat:now-60,exp:now+300,iss:process.env.APP_ID})}`;
+            const jwt = `${unsigned}.${crypto.sign('RSA-SHA256',Buffer.from(unsigned),process.env.APP_KEY).toString('base64url')}`;
+            core.setSecret(jwt);
+            const response = await fetch('https://api.github.com/app', {headers:{Authorization:`Bearer ${jwt}`,Accept:'application/vnd.github+json'}});
+            if (!response.ok) throw new Error(`App lookup failed: ${response.status}`);
+            const app = await response.json();
+            if (!/^Iv[0-9]+\.[a-zA-Z0-9]+$/.test(app.client_id)) throw new Error('Unexpected App client ID format');
+            core.info(`SOURCE_APP_CLIENT_ID=${app.client_id}`);
