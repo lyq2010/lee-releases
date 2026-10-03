@@ -23,4 +23,4 @@ jobs:
             if (!response.ok) throw new Error(`App lookup failed: ${response.status}`);
             const app = await response.json();
             if (typeof app.client_id !== 'string' || !app.client_id) throw new Error('Missing App client ID');
-            core.info(`SOURCE_APP_CLIENT_ID=${app.client_id}`);
+            core.info('EXISTING_SOURCE_ID_IS_CLIENT_ID=' + (String(app.client_id) === process.env.APP_ID));
