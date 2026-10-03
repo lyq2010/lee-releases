@@ -71,14 +71,14 @@ jobs:
           if ([string]$props.Project.PropertyGroup.Version -ne $env:VERSION) { throw 'Tag version mismatch' }
           if ((Get-FileHash tools/release/mirror_release.py).Hash -ne (Get-FileHash ../release-repo/release-tools/lees-emby/mirror_release.py).Hash) { throw 'Release mirror tooling is not synchronized' }
           if ((Get-FileHash tools/release/lees-emby-release.yml).Hash -ne (Get-FileHash ../release-repo/.github/workflows/lees-emby-release.yml).Hash) { throw 'Release workflow is not synchronized' }
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.401
       - name: Prepare native dependencies and NSIS
         working-directory: source
         shell: pwsh
         run: |
-          choco install nsis --version=3.11 -y --no-progress
+          choco install nsis --version=3.13 -y --no-progress
           if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
           if (!(Get-Command 7z -ErrorAction SilentlyContinue) -and !(Test-Path -LiteralPath "$env:ProgramFiles\7-Zip\7z.exe")) {
             choco install 7zip -y --no-progress
