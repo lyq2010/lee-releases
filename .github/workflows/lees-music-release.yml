@@ -83,6 +83,8 @@ jobs:
         api-level: 35
         target: google_apis
         arch: x86_64
+        disk-size: 2048M
+        working-directory: source
         script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
     - name: Restore signing material
       if: steps.existing.outputs.published != 'true'
