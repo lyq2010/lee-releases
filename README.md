@@ -16,7 +16,7 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 | Lee’s Toolbox Mac | Apple Silicon 原生业务工具箱，提供建筑板、冷库板等工具 |
 | Lee's Mail | Windows 与 macOS 邮件客户端 |
 | Lee's Emby | Windows 原生 Emby 媒体客户端 |
-| [Lee’s Music](docs/lees-music/README.md) | 连接自建 Navidrome 音乐库的 Android 播放器 |
+| Lee's Music | 连接自建 Navidrome 音乐库的 Android 播放器 |
 
 各产品使用独立的应用身份、安装包、数据目录和更新通道，可以并行安装。
 
@@ -29,8 +29,9 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 | Lee's Mail for Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
 | Lee's Mail for Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
 | Lee's Emby | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
+| Lee's Music | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) | `lees-music-*.apk` |
 
-请通过对应产品的下载入口选择版本。仓库的 Latest 标记只代表一个产品，不作为其他产品的下载依据。Android 音乐播放器的下载和使用入口见下方说明。
+请通过对应产品的下载入口选择版本。仓库的 Latest 标记只代表一个产品，不作为其他产品的下载依据。各平台的安装步骤与使用说明见下方对应章节。
 
 ## 安装与使用
 
@@ -54,7 +55,7 @@ Lee's Mail for Mac 与 Lee’s Toolbox Mac 使用 ad-hoc 应用签名，不申�
 
 ### Android · Lee’s Music
 
-[下载音乐安装包](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) · [功能介绍与使用说明](docs/lees-music/README.md)
+功能介绍与使用说明见 [Lee’s Music README](docs/lees-music/README.md)。
 
 1. 下载 `lees-music-*.apk`，安装到 Android 8.0 或更高版本的设备。
 2. 添加自己的 Navidrome 服务器，填写地址与登录信息。
