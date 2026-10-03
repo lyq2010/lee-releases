@@ -2,25 +2,23 @@
 
 # Lee Releases
 
-**Lee 系列原生桌面工具、Lee's Mail、Lee's Emby 与 Lee’s Music 的公开下载、安装与使用中心**
+**Lee 系列应用的公开下载与使用中心**
 
-这里集中发布原生工具箱、个人邮箱客户端、Emby 客户端和 Android 音乐播放器。每个产品使用独立标签、
-安装包名称与更新清单。
+Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以及 Android 音乐播放器。
 
 </div>
 
 ## 产品介绍
 
-本仓库提供 Lee 系列 Windows/macOS 原生工具箱、Lee's Mail 邮件客户端，以及 Lee's Emby 媒体客户端与 Lee’s Music Android 音乐播放器的公开安装包与更新清单。
+| 产品 | 用途 |
+| --- | --- |
+| Lee's 系统工具箱 | Windows 原生系统维护工具 |
+| Lee’s Toolbox Mac | Apple Silicon 原生业务工具箱，提供建筑板、冷库板等工具 |
+| Lee's Mail | Windows 与 macOS 邮件客户端 |
+| Lee's Emby | Windows 原生 Emby 媒体客户端 |
+| [Lee’s Music](docs/lees-music/README.md) | 连接自建 Navidrome 音乐库的 Android 播放器 |
 
-主要能力：
-
-- Lee's 系统工具箱提供 Windows 原生系统维护工具；
-- Lee’s Toolbox Mac 提供 Apple Silicon 原生业务工具箱；
-- Lee's Mail 提供 Windows 与 macOS 邮件客户端；
-- Lee's Emby 提供 Windows 原生 Emby 媒体客户端；
-- [Lee’s Music](docs/lees-music/README.md) 提供连接自建 Navidrome 音乐库的 Android 播放器；
-- 各产品使用独立更新通道，并校验更新包来源、哈希和签名。
+各产品使用独立的应用身份、安装包、数据目录和更新通道，可以并行安装。
 
 ## 下载与版本选择
 
@@ -31,58 +29,48 @@
 | Lee's Mail for Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
 | Lee's Mail for Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
 | Lee's Emby | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
-| [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) | `lees-music-*.apk` |
 
-### 怎么选择
+请通过对应产品的下载入口选择版本。仓库的 Latest 标记只代表一个产品，不作为其他产品的下载依据。Android 音乐播放器的下载和使用入口见下方说明。
 
-- 使用 Windows 11，需要原生系统维护能力，可选择 Lee's 系统工具箱。
-- 使用 Apple Silicon Mac，需要建筑板、冷库板等原生业务工具，可选择 Lee’s Toolbox Mac。
-- 需要邮件客户端时，按当前系统选择 Lee's Mail for Windows 或 Lee's Mail for Mac。
-- 需要 Emby 媒体客户端时，选择 Lee's Emby。GitHub 仓库的 Latest 标记固定给 Lee's Mail for Windows，Emby 请按上表产品入口下载。
-- 需要在 Android 上收听自建 Navidrome 音乐库时，选择 [Lee’s Music](docs/lees-music/README.md)。
-- 各产品使用独立的应用身份、数据目录和更新通道，可以并行安装。
-
-## 安装
+## 安装与使用
 
 ### Windows
 
-1. 下载对应的 `setup.exe`。
-2. 双击运行安装程序。
-3. 安装完成后，从开始菜单启动应用。
+下载所选产品的 `setup.exe`，运行安装程序，完成后从开始菜单启动应用。
 
-Lee's Emby 通过本仓库的 Release 安装和更新。下载 `LeesEmby_*_x64-setup.exe` 后直接运行，
-安装到当前用户目录，无需管理员。安装器把内置的 `CN=Lee` 证书写入当前用户证书库；
-卸载默认保留用户数据，勾选清理后才全量删除。安装后由应用内更新提示后续版本。
-Release 同时附带 minisign 签名、公钥证书、版本清单和 GPL 对应源码归档。
+- **Lee's 系统工具箱**：适用于 Windows 11 22H2+ x64，提供本机系统维护能力。
+- **Lee's Mail for Windows**：安装器请求管理员权限，将内置的 `CN=Lee` 证书导入本机“受信任人”，再安装 MSIX，无需手工导入证书。发行版同时提供原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，供离线校验与高级安装使用。
+- **Lee's Emby**：安装到当前用户目录，无需管理员；安装器将内置的 `CN=Lee` 证书写入当前用户证书库。卸载默认保留用户数据，勾选清理后才全部删除。发行版同时提供 minisign 签名、公钥证书、版本清单和 GPL 对应源码归档。
 
-Lee's Mail for Windows 通过本仓库的 Release 安装和更新。下载 `LeesMail_*_x64-setup.exe` 后直接运行，
-安装器会请求管理员权限，把内置的 `CN=Lee` 证书导入本机“受信任人”，再安装内置 MSIX，
-无需手工导入证书。安装后由应用内更新提示后续版本。
-Release 同时附带原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，
-供离线校验与高级安装使用。
+Mail 与 Emby 安装后可通过应用内提示更新后续版本。
 
 ### macOS
 
-1. 下载对应的 `.dmg`。
+1. 下载对应产品的 `.dmg`。
 2. 打开 DMG，将应用拖入“应用程序”。
 3. 如果系统阻止首次打开，请前往“系统设置 → 隐私与安全性”确认允许。
 
-Lee's Mail for Mac 与 Lee’s Toolbox Mac 一样使用 ad-hoc 应用签名，不申请 Developer ID，
-也不执行 Apple 公证。首次安装需要按上一步在系统设置中确认；后续应用内更新会同时
-校验 HTTPS 来源、文件大小、SHA-256 和对应签名。
+Lee's Mail for Mac 与 Lee’s Toolbox Mac 使用 ad-hoc 应用签名，不申请 Developer ID，也不执行 Apple 公证。首次安装需要按上面的步骤确认；后续应用内更新会校验 HTTPS 来源、文件大小、SHA-256 和对应签名。
 
-### Android
+### Android · Lee’s Music
 
-Lee’s Music 的功能介绍与使用说明见 [音乐项目 README](docs/lees-music/README.md)。下载 `lees-music-*.apk` 后安装，连接自己的 Navidrome 服务器即可使用。音乐版本沿用原签名，支持覆盖升级；闭源发行，仅限个人、非商业用途，不提供项目源码。使用许可及第三方声明见音乐文档和应用内“软件许可”。
+[下载音乐安装包](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) · [功能介绍与使用说明](docs/lees-music/README.md)
 
-## 隐私与数据
+1. 下载 `lees-music-*.apk`，安装到 Android 8.0 或更高版本的设备。
+2. 添加自己的 Navidrome 服务器，填写地址与登录信息。
+3. 浏览音乐库，开始播放；需要离线收听时可在应用内下载歌曲。
 
-- 邮件、媒体与工具数据由对应应用在本机处理；
-- 更新包会校验来源、大小、哈希和签名；
-- 私有配置与密钥不写入公开仓库。
+音乐版本沿用原签名，支持覆盖升级，无需清除数据。Lee’s Music 闭源发行，仅限个人、非商业用途，不提供项目源码；[使用许可](docs/lees-music/LICENSE)与[第三方声明](docs/lees-music/THIRD_PARTY_NOTICES.md)可在文档和应用内查看。
 
-## 获取帮助
+## 隐私与更新
 
-遇到问题时，请提供应用版本、平台、失败步骤和必要日志；不要在公开位置上传包含隐私或账户信息的原始数据。
+- 邮件、媒体与工具数据由对应应用在本机处理。
+- 各产品通过独立通道获取更新，并校验更新包来源、大小、哈希或签名。
+- 私有配置、签名密钥和账户凭据不写入公开仓库。
+- 各产品的使用许可和第三方声明以对应发行版及应用内说明为准。
 
-公司内部使用，保留所有权利。
+## 问题反馈
+
+通过 [Issues](https://github.com/lyq2010/lee-releases/issues) 报告问题或提出建议，请注明产品名称、应用版本、系统版本、复现步骤和必要日志。
+
+不要在公开位置上传密码、令牌、私人服务器地址或包含个人隐私的原始数据。
