@@ -86,7 +86,7 @@ jobs:
         arch: x86_64
         disk-size: 2048M
         working-directory: source
-        script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain --info
+        script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
     - name: Show failed emulator test diagnostics
       if: failure() && steps.emulator-tests.conclusion == 'failure'
       run: |
