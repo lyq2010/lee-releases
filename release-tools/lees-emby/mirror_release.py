@@ -15,6 +15,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from mirror_retention import cos_keys, prune_old_assets, r2_keys, r2_objects_path, version_tuple
+
 
 MANIFEST_NAME = "latest-lees-emby.json"
 PUBLIC_FIELDS = (
@@ -74,6 +76,10 @@ def load_release(assets: Path) -> tuple[dict[str, Any], Path, Path, Path]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     package_name = safe_asset_name(manifest.get("package"), "package")
     source_name = safe_asset_name(manifest.get("sourceArchive"), "sourceArchive")
+    version = str(manifest.get("version", ""))
+    version_tuple(version)
+    if package_name != f"LeesEmby_{version}_x64-setup.exe" or source_name != f"lees-emby_{version}_source.zip":
+        raise SystemExit("Manifest version and asset names disagree")
     package_path = assets / package_name
     source_path = assets / source_name
     if not package_path.is_file() or not source_path.is_file():
@@ -106,6 +112,18 @@ def open_public(url: str, *, method: str = "GET") -> Any:
         },
     )
     return urllib.request.urlopen(request, timeout=30)
+
+
+def reject_downgrade(base: str, version: str) -> None:
+    run_id = urllib.parse.quote(os.environ.get("GITHUB_RUN_ID", "manual"), safe="")
+    try:
+        with open_public(f"{base}/{MANIFEST_NAME}?verify={run_id}") as response:
+            published = json.loads(response.read().decode("utf-8"))
+        if version_tuple(published["version"]) > version_tuple(version):
+            raise SystemExit("Refusing to replace a newer Lee's Emby mirror release")
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
 
 
 def verify_public(base: str, expected: dict[str, Any], package: Path, source: Path) -> None:
@@ -166,17 +184,27 @@ def mirror_cos(assets: Path) -> None:
             SecretId=require_env("TENCENT_COS_SECRET_ID"),
             SecretKey=require_env("TENCENT_COS_SECRET_KEY"),
             Scheme="https",
+            Timeout=60,
         )
     )
 
-    client.upload_file(Bucket=bucket, LocalFilePath=str(package), Key=object_key(package.name), EnableMD5=False)
-    client.upload_file(Bucket=bucket, LocalFilePath=str(source), Key=object_key(source.name), EnableMD5=False)
+    reject_downgrade(base, manifest["version"])
+    for asset in (package, source):
+        print(f"Uploading COS asset: {asset.name} ({asset.stat().st_size} bytes)", flush=True)
+        client.upload_file(Bucket=bucket, LocalFilePath=str(asset), Key=object_key(asset.name), EnableMD5=False)
+        print(f"Uploaded COS asset: {asset.name}", flush=True)
     write_mirror_manifest(manifest, manifest_path, base, package)
     client.put_object(
         Bucket=bucket,
         Body=manifest_path.read_bytes(),
         Key=object_key(MANIFEST_NAME),
         ContentType="application/json; charset=utf-8",
+    )
+    verify_public(base, manifest, package, source)
+    prune_old_assets(
+        lambda: cos_keys(client, bucket, prefix),
+        lambda key: client.delete_object(Bucket=bucket, Key=key),
+        manifest["version"], prefix,
     )
     verify_public(base, manifest, package, source)
 
@@ -231,10 +259,17 @@ def mirror_r2(assets: Path) -> None:
 
     command_env = os.environ.copy()
     command_env["CLOUDFLARE_ACCOUNT_ID"] = account_id
+    reject_downgrade(base, manifest["version"])
     wrangler_put(bucket, package.name, package, None, command_env)
     wrangler_put(bucket, source.name, source, None, command_env)
     write_mirror_manifest(manifest, manifest_path, base, package)
     wrangler_put(bucket, MANIFEST_NAME, manifest_path, "application/json; charset=utf-8", command_env)
+    verify_public(base, manifest, package, source)
+    prune_old_assets(
+        lambda: r2_keys(cloudflare_request, token, account_id, bucket),
+        lambda key: cloudflare_request(token, "DELETE", f"{r2_objects_path(account_id, bucket)}/{urllib.parse.quote(key, safe='/')}"),
+        manifest["version"],
+    )
     verify_public(base, manifest, package, source)
 
     print("R2 Lee's Emby mirror complete")
