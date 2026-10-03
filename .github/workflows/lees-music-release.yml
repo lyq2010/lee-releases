@@ -77,6 +77,7 @@ jobs:
 
         '
     - name: Run isolated emulator tests
+      id: emulator-tests
       if: steps.existing.outputs.published != 'true'
       uses: reactivecircus/android-emulator-runner@v2
       with:
@@ -87,8 +88,11 @@ jobs:
         working-directory: source
         script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain --info
     - name: Show failed emulator test diagnostics
-      if: failure()
-      run: find app/build/outputs/androidTest-results -type f -name '*.xml' -print -exec cat {} \;
+      if: failure() && steps.emulator-tests.conclusion == 'failure'
+      run: |
+        if [ -d app/build/outputs/androidTest-results ]; then
+          find app/build/outputs/androidTest-results -type f -name '*.xml' -print -exec cat {} \;
+        fi
     - name: Restore signing material
       if: steps.existing.outputs.published != 'true'
       env:
