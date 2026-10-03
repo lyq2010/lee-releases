@@ -12,11 +12,11 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 
 | 产品 | 用途 |
 | --- | --- |
-| Lee's 系统工具箱 | Windows 原生系统维护工具 |
-| Lee’s Toolbox Mac | Apple Silicon 原生业务工具箱，提供建筑板、冷库板等工具 |
-| Lee's Mail | Windows 与 macOS 邮件客户端 |
-| Lee's Emby | Windows 原生 Emby 媒体客户端 |
-| Lee's Music | 连接自建 Navidrome 音乐库的 Android 播放器 |
+| [Lee's 系统工具箱](docs/lees-system-toolbox/README.md) | Windows 原生系统维护工具 |
+| [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon 原生业务工具箱，提供建筑板、冷库板等工具 |
+| [Lee's Mail](docs/lees-mail/README.md) | Windows 与 macOS 邮件客户端 |
+| [Lee's Emby](docs/lees-emby/README.md) | Windows 原生 Emby 媒体客户端，支持本地播放 |
+| [Lee’s Music](docs/lees-music/README.md) | 连接自建 Navidrome 音乐库的 Android 播放器 |
 
 各产品使用独立的应用身份、安装包、数据目录和更新通道，可以并行安装。
 
@@ -24,12 +24,12 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 
 | 版本 | 适用系统 | 下载入口 | 安装文件 |
 |---|---|---|---|
-| Lee's 系统工具箱 | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
-| Lee’s Toolbox Mac | Apple Silicon | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
-| Lee's Mail for Windows | Windows 11 22H2+ x64 | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
-| Lee's Mail for Mac | Apple Silicon、macOS 15+ | [最新稳定版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
-| Lee's Emby | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
-| Lee's Music | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) | `lees-music-*.apk` |
+| [Lee's 系统工具箱](docs/lees-system-toolbox/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
+| [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon、macOS 14+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
+| [Lee's Mail for Windows](docs/lees-mail/README.md#windows) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
+| [Lee's Mail for Mac](docs/lees-mail/README.md#mac) | Apple Silicon、macOS 15+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
+| [Lee's Emby](docs/lees-emby/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
+| [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) | `lees-music-*.apk` |
 
 请通过对应产品的下载入口选择版本。仓库的 Latest 标记只代表一个产品，不作为其他产品的下载依据。各平台的安装步骤与使用说明见下方对应章节。
 
@@ -39,6 +39,8 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 
 下载所选产品的 `setup.exe`，运行安装程序，完成后从开始菜单启动应用。
 
+[系统工具箱使用说明](docs/lees-system-toolbox/README.md) · [Mail 使用说明](docs/lees-mail/README.md#windows) · [Emby 使用说明](docs/lees-emby/README.md)
+
 - **Lee's 系统工具箱**：适用于 Windows 11 22H2+ x64，提供本机系统维护能力。
 - **Lee's Mail for Windows**：安装器请求管理员权限，将内置的 `CN=Lee` 证书导入本机“受信任人”，再安装 MSIX，无需手工导入证书。发行版同时提供原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，供离线校验与高级安装使用。
 - **Lee's Emby**：安装到当前用户目录，无需管理员；安装器将内置的 `CN=Lee` 证书写入当前用户证书库。卸载默认保留用户数据，勾选清理后才全部删除。发行版同时提供 minisign 签名、公钥证书、版本清单和 GPL 对应源码归档。
@@ -46,6 +48,8 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 Mail 与 Emby 安装后可通过应用内提示更新后续版本。
 
 ### macOS
+
+[工具箱功能与使用说明](docs/lees-toolbox-mac/README.md) · [Mail 功能与使用说明](docs/lees-mail/README.md#mac)
 
 1. 下载对应产品的 `.dmg`。
 2. 打开 DMG，将应用拖入“应用程序”。
