@@ -29,7 +29,7 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 | [Lee's Mail for Windows](docs/lees-mail/README.md#windows) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
 | [Lee's Mail for Mac](docs/lees-mail/README.md#mac) | Apple Silicon、macOS 15+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
 | [Lee's Emby](docs/lees-emby/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
-| [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-music&expanded=true) | `lees-music-*.apk` |
+| [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Music&expanded=true) | `lees-music-*.apk` |
 
 请通过对应产品的下载入口选择版本。仓库的 Latest 标记只代表一个产品，不作为其他产品的下载依据。各平台的安装步骤与使用说明见下方对应章节。
 
