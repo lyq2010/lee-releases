@@ -1,0 +1,212 @@
+# Deploy to lyq2010/lee-releases/.github/workflows/lees-music-release.yml.
+name: Lee's Music release
+permissions:
+  contents: read
+env:
+  RELEASE_REPOSITORY: ${{ github.repository }}
+concurrency:
+  group: lees-music-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create private source read token
+      id: source-token
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ secrets.SOURCE_APP_ID }}
+        private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+        owner: lyq2010
+        repositories: lees-music
+        permission-contents: read
+    - name: Checkout release tools
+      uses: actions/checkout@v7
+      with:
+        ref: main
+        persist-credentials: false
+        repository: lyq2010/lees-music
+        path: source
+        token: ${{ steps.source-token.outputs.token }}
+        fetch-depth: 0
+    - name: Check immutable release
+      id: existing
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+      run: python3 -B tools/release/published.py
+    - uses: actions/checkout@v7
+      if: steps.existing.outputs.published != 'true'
+      with:
+        ref: ${{ inputs.tag }}
+        persist-credentials: false
+        repository: lyq2010/lees-music
+        path: source
+        token: ${{ steps.source-token.outputs.token }}
+        fetch-depth: 0
+    - name: Validate private source tag
+      if: steps.existing.outputs.published != 'true'
+      run: git merge-base --is-ancestor HEAD origin/main
+    - uses: actions/setup-java@v6
+      if: steps.existing.outputs.published != 'true'
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@v4
+      if: steps.existing.outputs.published != 'true'
+    - name: Install Android SDK
+      if: steps.existing.outputs.published != 'true'
+      run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
+    - name: Test release helpers
+      if: steps.existing.outputs.published != 'true'
+      run: python3 -B -m unittest discover -s tools/release/tests -v
+    - name: Verify resolved runtime and third-party notices
+      if: steps.existing.outputs.published != 'true'
+      run: 'bash gradlew :app:releaseDependencyInventory --no-daemon --no-configuration-cache --console=plain
+
+        python3 tools/release/notices.py --check
+
+        '
+    - name: Enable KVM
+      if: steps.existing.outputs.published != 'true'
+      run: 'echo ''KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"'' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+
+        sudo udevadm control --reload-rules
+
+        sudo udevadm trigger --name-match=kvm
+
+        '
+    - name: Run isolated emulator tests
+      if: steps.existing.outputs.published != 'true'
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 35
+        target: google_apis
+        arch: x86_64
+        script: bash gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
+    - name: Restore signing material
+      if: steps.existing.outputs.published != 'true'
+      env:
+        KEYSTORE: ${{ secrets.LEES_MUSIC_KEYSTORE_BASE64 }}
+      run: 'test -n "$KEYSTORE"
+
+        printf ''%s'' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/music.p12"
+
+        '
+    - name: Test and build signed APK
+      if: steps.existing.outputs.published != 'true'
+      env:
+        LEES_MUSIC_KEYSTORE: ${{ runner.temp }}/music.p12
+        LEES_MUSIC_STORE_PASSWORD: ${{ secrets.LEES_MUSIC_STORE_PASSWORD }}
+        LEES_MUSIC_KEY_PASSWORD: ${{ secrets.LEES_MUSIC_KEY_PASSWORD }}
+      run: bash gradlew testDebugUnitTest lintRelease assembleRelease --no-daemon --console=plain
+    - name: Verify APK and stage closed release
+      if: steps.existing.outputs.published != 'true'
+      env:
+        TAG: ${{ inputs.tag }}
+      run: '"$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+
+        python3 tools/release/audit_apk.py app/build/outputs/apk/release/app-release.apk
+
+        python3 tools/release/stage.py "$TAG"
+
+        '
+    - name: Publish immutable release
+      if: steps.existing.outputs.published != 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+      run: 'version="${TAG#v}"
+
+        public_tag="lees-music-$TAG"
+
+        gh release create "$public_tag" "artifacts/release/lees-music-$version.apk" "artifacts/release/lees-music-$version-SHA256SUMS.txt" artifacts/release/latest-lees-music.json
+        --repo "$RELEASE_REPOSITORY" --target main --draft --latest=false --title "Lee''s Music $version 正式版" --notes-file docs/RELEASE_NOTES.md
+
+        gh release edit "$public_tag" --repo "$RELEASE_REPOSITORY" --draft=false --latest=false
+
+        '
+    - name: Remove runner signing material
+      if: always()
+      run: rm -f "$RUNNER_TEMP/music.p12"
+    permissions:
+      contents: write
+  cos:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create private source read token
+      id: source-token
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ secrets.SOURCE_APP_ID }}
+        private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+        owner: lyq2010
+        repositories: lees-music
+        permission-contents: read
+    - uses: actions/checkout@v7
+      with:
+        ref: main
+        persist-credentials: false
+        repository: lyq2010/lees-music
+        path: source
+        token: ${{ steps.source-token.outputs.token }}
+    - name: Test mirror cleanup boundaries
+      run: python3 -B -m unittest discover -s tools/release/tests -v
+    - name: Download published assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+      run: gh release download "lees-music-$TAG" --repo "$RELEASE_REPOSITORY" --dir assets
+    - run: python3 -m pip install cos-python-sdk-v5
+    - name: Mirror and verify COS
+      env:
+        TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+        TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+        TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+        TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+      run: python3 tools/release/mirror.py cos
+  r2:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create private source read token
+      id: source-token
+      uses: actions/create-github-app-token@v3
+      with:
+        app-id: ${{ secrets.SOURCE_APP_ID }}
+        private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+        owner: lyq2010
+        repositories: lees-music
+        permission-contents: read
+    - uses: actions/checkout@v7
+      with:
+        ref: main
+        persist-credentials: false
+        repository: lyq2010/lees-music
+        path: source
+        token: ${{ steps.source-token.outputs.token }}
+    - name: Test mirror cleanup boundaries
+      run: python3 -B -m unittest discover -s tools/release/tests -v
+    - name: Download published assets
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+      run: gh release download "lees-music-$TAG" --repo "$RELEASE_REPOSITORY" --dir assets
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+    - name: Mirror and verify R2
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      run: python3 tools/release/mirror.py r2
+'on':
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Private music version tag to publish or remirror
+        required: true
+        type: string
+defaults:
+  run:
+    working-directory: source
