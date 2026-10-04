@@ -71,6 +71,7 @@
 | `androidx.media3:media3-datasource-okhttp:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
 | `androidx.media3:media3-datasource:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
 | `androidx.media3:media3-decoder:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
+| `androidx.media3:media3-exoplayer-hls:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
 | `androidx.media3:media3-exoplayer:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
 | `androidx.media3:media3-extractor:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
 | `androidx.media3:media3-session:1.11.1` | [The Apache Software License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt) |
