@@ -7,6 +7,11 @@ on:
         description: "Lee's Mail private source tag (for example v1.0.0)"
         required: true
         type: string
+      skip_worker:
+        description: "Skip tracking Worker validation for an explicitly authorized client-only release"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -111,6 +116,7 @@ jobs:
           node-version: 24
 
       - name: Install pnpm
+        if: ${{ !inputs.skip_worker }}
         shell: pwsh
         run: npm install --global pnpm@11.9.0
 
@@ -187,6 +193,7 @@ jobs:
         run: ./scripts/verify-ui-quality.ps1
 
       - name: Test Cloudflare tracking worker
+        if: ${{ !inputs.skip_worker }}
         working-directory: source/tracking-worker
         shell: pwsh
         env:
