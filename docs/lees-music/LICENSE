@@ -1,20 +1,40 @@
 Lee's Music 专有软件许可协议
+Lee's Music Proprietary Software License Agreement
 Copyright © 2026 lyq2010。保留所有权利。
+Copyright © 2026 lyq2010. All rights reserved.
 
 1. 适用范围
 本协议适用于首次以本协议发布的 Lee's Music 版本及其后续专有版本，不追溯变更此前以 GNU GPL 发布的版本。第三方组件不受本协议替代，其版权、许可证及声明见应用内“第三方声明”。
 
+1. Scope
+This agreement applies to the first version of Lee's Music released under this agreement and to subsequent proprietary versions. It does not retroactively change the license of versions previously released under the GNU GPL. This agreement does not replace the licenses of third-party components; their copyrights, licenses and notices are available under “Third-party notices” in the application.
+
 2. 使用授权
 权利人授予你免费、非独占、不可转让的许可，仅允许你为个人、非商业目的，在自己拥有或合法控制的设备上安装、运行本软件，并制作个人备份副本。本软件以闭源方式提供，不授予获取项目源码的权利。
+
+2. Permission to Use
+The rights holder grants you a free, non-exclusive, non-transferable license to install and run this software on devices you own or lawfully control, and to make personal backup copies, solely for personal, non-commercial purposes. The software is provided as closed-source software. No right to obtain the project's source code is granted.
 
 3. 使用限制
 未经权利人事先书面许可，不得将本软件用于商业、经营、收费服务、组织业务或其他以营利为目的的活动；不得出售、出租、再分发、转授权、修改本软件或制作其衍生作品；不得删除版权及许可声明。不得反编译、反汇编或以其他方式获取源码，但适用法律明确允许的行为除外。这些限制不缩减第三方许可证另行授予的权利。
 
+3. Restrictions
+Without the rights holder's prior written permission, you may not use this software for commercial activities, business operations, paid services, organizational business or other profit-seeking activities. You may not sell, rent, redistribute, sublicense or modify the software, create derivative works, or remove copyright or license notices. You may not decompile, disassemble or otherwise obtain its source code, except where expressly permitted by applicable law. These restrictions do not reduce rights separately granted by third-party licenses.
+
 4. 权利保留
 本软件的自有代码、图标、名称和其他自有内容的权利归权利人所有。除本协议明确授予的权限外，其他权利均予保留。商业使用及其他超出本协议范围的使用须另行取得书面授权。
+
+4. Reservation of Rights
+Rights to the software's own code, icons, name and other proprietary content belong to the rights holder. All rights not expressly granted by this agreement are reserved. Commercial use and other uses outside the scope of this agreement require separate written authorization.
 
 5. 保证与责任
 在适用法律允许的范围内，本软件按“现状”提供，不承诺无错误、持续提供、适销性或特定用途适用性。你应自行判断使用本软件的适当性并备份重要数据。责任限制不排除或限制适用法律规定不得排除或限制的责任。
 
+5. Warranties and Liability
+To the extent permitted by applicable law, this software is provided “as is”, without any assurance that it is error-free or will remain available, or any warranty of merchantability or fitness for a particular purpose. You are responsible for deciding whether the software is suitable for your use and for backing up important data. No limitation of liability excludes or limits liability that applicable law does not permit to be excluded or limited.
+
 6. 终止
 违反本协议时，你应停止使用并删除相应专有版本及其副本。依法存续的义务和第三方许可证授予的权利不受影响。
+
+6. Termination
+If you violate this agreement, you must stop using and delete the applicable proprietary version and its copies. Obligations that survive under applicable law and rights granted by third-party licenses remain unaffected.
