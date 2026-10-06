@@ -27,9 +27,6 @@ PUBLIC_FIELDS = (
     "sha256",
     "size",
     "certificateThumbprint",
-    "sourceArchive",
-    "sourceSha256",
-    "sourceSize",
     "signature",
 )
 # Cloudflare Bot Fight Mode rejects Python's default urllib User-Agent with 403.
@@ -69,32 +66,30 @@ def safe_asset_name(value: Any, field: str) -> str:
     return value
 
 
-def load_release(assets: Path) -> tuple[dict[str, Any], Path, Path, Path]:
+def load_release(assets: Path) -> tuple[dict[str, Any], Path, Path]:
     manifest_path = assets / MANIFEST_NAME
     if not manifest_path.is_file():
         raise SystemExit(f"Missing release manifest: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for field in ("sourceArchive", "sourceSha256", "sourceSize"):
+        manifest.pop(field, None)
     package_name = safe_asset_name(manifest.get("package"), "package")
-    source_name = safe_asset_name(manifest.get("sourceArchive"), "sourceArchive")
     version = str(manifest.get("version", ""))
     version_tuple(version)
-    if package_name != f"LeesEmby_{version}_x64-setup.exe" or source_name != f"lees-emby_{version}_source.zip":
+    if package_name != f"LeesEmby_{version}_x64-setup.exe":
         raise SystemExit("Manifest version and asset names disagree")
     package_path = assets / package_name
-    source_path = assets / source_name
-    if not package_path.is_file() or not source_path.is_file():
+    if not package_path.is_file():
         raise SystemExit("Lee's Emby release assets are incomplete")
 
-    source_url_name = Path(urllib.parse.urlparse(str(manifest.get("url", ""))).path).name
-    if source_url_name != package_name:
+    package_url_name = Path(urllib.parse.urlparse(str(manifest.get("url", ""))).path).name
+    if package_url_name != package_name:
         raise SystemExit("Manifest package and URL disagree")
     if sha256(package_path) != str(manifest.get("sha256", "")).upper() or package_path.stat().st_size != manifest.get("size"):
         raise SystemExit("Lee's Emby package hash or size mismatch")
-    if sha256(source_path) != str(manifest.get("sourceSha256", "")).upper() or source_path.stat().st_size != manifest.get("sourceSize"):
-        raise SystemExit("Lee's Emby source archive hash or size mismatch")
     if manifest.get("platform") != "windows-x86_64" or not manifest.get("certificateThumbprint"):
         raise SystemExit("Lee's Emby manifest identity fields are invalid")
-    return manifest, manifest_path, package_path, source_path
+    return manifest, manifest_path, package_path
 
 
 def write_mirror_manifest(manifest: dict[str, Any], manifest_path: Path, base: str, package: Path) -> None:
@@ -126,7 +121,7 @@ def reject_downgrade(base: str, version: str) -> None:
             raise
 
 
-def verify_public(base: str, expected: dict[str, Any], package: Path, source: Path) -> None:
+def verify_public(base: str, expected: dict[str, Any], package: Path) -> None:
     run_id = urllib.parse.quote(os.environ.get("GITHUB_RUN_ID", "manual"), safe="")
     manifest_url = f"{base}/{MANIFEST_NAME}?verify={run_id}"
     last_error: Exception | None = None
@@ -139,10 +134,9 @@ def verify_public(base: str, expected: dict[str, Any], package: Path, source: Pa
             if mismatches:
                 raise SystemExit(f"Published Lee's Emby manifest mismatch: {', '.join(mismatches)}")
 
-            for asset in (package, source):
-                with open_public(f"{base}/{asset.name}?verify={run_id}", method="HEAD") as response:
-                    if response.status != 200:
-                        raise SystemExit(f"Lee's Emby mirror asset is not publicly available: {asset.name}")
+            with open_public(f"{base}/{package.name}?verify={run_id}", method="HEAD") as response:
+                if response.status != 200:
+                    raise SystemExit(f"Lee's Emby mirror asset is not publicly available: {package.name}")
             return
         except urllib.error.HTTPError as error:
             last_error = error
@@ -172,7 +166,7 @@ def mirror_cos(assets: Path) -> None:
     except ImportError as error:
         raise SystemExit("cos-python-sdk-v5 is required for the COS mirror") from error
 
-    manifest, manifest_path, package, source = load_release(assets)
+    manifest, manifest_path, package = load_release(assets)
     base = public_base("COS_PUBLIC_BASE_URL")
     parsed = urllib.parse.urlparse(base)
     prefix = parsed.path.strip("/")
@@ -189,10 +183,9 @@ def mirror_cos(assets: Path) -> None:
     )
 
     reject_downgrade(base, manifest["version"])
-    for asset in (package, source):
-        print(f"Uploading COS asset: {asset.name} ({asset.stat().st_size} bytes)", flush=True)
-        client.upload_file(Bucket=bucket, LocalFilePath=str(asset), Key=object_key(asset.name), EnableMD5=False)
-        print(f"Uploaded COS asset: {asset.name}", flush=True)
+    print(f"Uploading COS asset: {package.name} ({package.stat().st_size} bytes)", flush=True)
+    client.upload_file(Bucket=bucket, LocalFilePath=str(package), Key=object_key(package.name), EnableMD5=False)
+    print(f"Uploaded COS asset: {package.name}", flush=True)
     write_mirror_manifest(manifest, manifest_path, base, package)
     client.put_object(
         Bucket=bucket,
@@ -200,13 +193,13 @@ def mirror_cos(assets: Path) -> None:
         Key=object_key(MANIFEST_NAME),
         ContentType="application/json; charset=utf-8",
     )
-    verify_public(base, manifest, package, source)
+    verify_public(base, manifest, package)
     prune_old_assets(
         lambda: cos_keys(client, bucket, prefix),
         lambda key: client.delete_object(Bucket=bucket, Key=key),
         manifest["version"], prefix,
     )
-    verify_public(base, manifest, package, source)
+    verify_public(base, manifest, package)
 
     print("COS Lee's Emby mirror complete")
 
@@ -246,7 +239,7 @@ def wrangler_put(bucket: str, object_name: str, source: Path, content_type: str 
 
 
 def mirror_r2(assets: Path) -> None:
-    manifest, manifest_path, package, source = load_release(assets)
+    manifest, manifest_path, package = load_release(assets)
     base = public_base("R2_PUBLIC_BASE_URL")
     bucket = require_env("R2_BUCKET")
     token = require_env("CLOUDFLARE_API_TOKEN")
@@ -261,16 +254,15 @@ def mirror_r2(assets: Path) -> None:
     command_env["CLOUDFLARE_ACCOUNT_ID"] = account_id
     reject_downgrade(base, manifest["version"])
     wrangler_put(bucket, package.name, package, None, command_env)
-    wrangler_put(bucket, source.name, source, None, command_env)
     write_mirror_manifest(manifest, manifest_path, base, package)
     wrangler_put(bucket, MANIFEST_NAME, manifest_path, "application/json; charset=utf-8", command_env)
-    verify_public(base, manifest, package, source)
+    verify_public(base, manifest, package)
     prune_old_assets(
         lambda: r2_keys(cloudflare_request, token, account_id, bucket),
         lambda key: cloudflare_request(token, "DELETE", f"{r2_objects_path(account_id, bucket)}/{urllib.parse.quote(key, safe='/')}"),
         manifest["version"],
     )
-    verify_public(base, manifest, package, source)
+    verify_public(base, manifest, package)
 
     print("R2 Lee's Emby mirror complete")
 

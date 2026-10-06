@@ -118,7 +118,7 @@ jobs:
         env:
           VERSION: ${{ steps.tags.outputs.version }}
         run: ./tools/release/Verify-Installer.ps1 -ReleaseDirectory "artifacts/release/$env:VERSION"
-      - name: Stage source archive and release notes
+      - name: Stage release notes
         working-directory: source
         shell: pwsh
         env:
@@ -134,7 +134,7 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           $assets = @(Get-ChildItem "artifacts/release/$env:VERSION/assets" -File)
-          if ($assets.Count -ne 5) { throw 'Expected EXE, minisig, certificate, source archive and manifest' }
+          if ($assets.Count -ne 4) { throw 'Expected EXE, minisig, certificate and manifest' }
           gh release view $env:TAG --repo $env:GITHUB_REPOSITORY --json isDraft > $null 2>&1
           if ($LASTEXITCODE -eq 0) { throw 'Release already exists; do not replace a published update' }
           gh release create $env:TAG --repo $env:GITHUB_REPOSITORY --draft --latest=false --title "Lee's Emby $env:VERSION" --notes-file "artifacts/release/$env:VERSION/release-notes.md"

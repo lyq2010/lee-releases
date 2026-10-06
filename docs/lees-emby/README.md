@@ -11,9 +11,10 @@
 
 ![Windows 11 22H2+](https://img.shields.io/badge/Windows-11_22H2%2B-0078D4)
 ![mpv](https://img.shields.io/badge/播放内核-mpv-8B7CF8)
-![GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue)
 
 [下载版本](https://github.com/lyq2010/lee-releases/releases?q=lees-emby&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=lees-emby&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+
+Copyright © 2026 lyq2010
 
 </div>
 
@@ -56,13 +57,13 @@ Emby 访问令牌保存在 Windows 凭据管理器中，不写入数据库或诊
 
 本地弹幕默认关闭。首次启用时会说明将向已配置的弹幕服务发送文件名、大小和时长。
 
-后续版本通过应用内提示更新，安装前校验大小、SHA-256、Minisign 签名与版本。发行版同时提供签名、公钥证书、版本清单和对应源码归档。
+后续版本通过应用内提示更新，安装前校验大小、SHA-256、Minisign 签名与版本。发行版同时提供签名、公钥证书和版本清单。
 
 ## 反馈与许可
 
 通过 [Issues](https://github.com/lyq2010/lee-releases/issues) 提交应用版本、Windows 版本、片源类型与复现步骤。诊断信息请先脱敏，不要提交服务器令牌、私人地址或媒体文件。
 
-本软件遵循 **GPL-3.0-or-later**，包含 Windows 平台运行时的附加许可例外。许可证、第三方声明与对应源码随发行版提供，以该版本的随附文件为准。
+许可证与第三方声明随安装包提供，发行版不附带源码包。
 
 ---
 
