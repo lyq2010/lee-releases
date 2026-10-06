@@ -255,6 +255,12 @@ jobs:
     if: ${{ needs.build-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout COS retry helper
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          path: release-repo
       - name: Download native Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -276,7 +282,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --user cos-python-sdk-v5
-          python3 - <<'PY'
+          cat > "$RUNNER_TEMP/cos_step.py" << 'PY'
           import json
           import os
           import sys
@@ -341,6 +347,7 @@ jobs:
               sys.exit("COS latest-native.json signature missing")
           print("COS native mirror complete")
           PY
+          python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$RUNNER_TEMP/cos_step.py"
 
   r2-native-mirror:
     needs: build-native

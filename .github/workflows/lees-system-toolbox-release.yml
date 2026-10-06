@@ -293,6 +293,12 @@ jobs:
     needs: build-lees-system-toolbox
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout COS retry helper
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          path: release-repo
       - name: Download public Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -314,7 +320,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --user cos-python-sdk-v5
-          python3 - <<'PY'
+          cat > "$RUNNER_TEMP/cos_step.py" << 'PY'
           import hashlib, json, os, sys, urllib.request
           from pathlib import Path
           from urllib.parse import urlparse
@@ -369,6 +375,7 @@ jobs:
               if int(response.headers.get("Content-Length", "0")) != installer_path.stat().st_size:
                   sys.exit("COS public installer size mismatch")
           PY
+          python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$RUNNER_TEMP/cos_step.py"
 
   r2-lees-system-toolbox-mirror:
     needs: build-lees-system-toolbox

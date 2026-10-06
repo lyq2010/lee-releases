@@ -384,6 +384,12 @@ jobs:
     if: ${{ needs.build.result == 'success' && inputs.publish }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout COS retry helper
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          path: release-repo
       - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -405,7 +411,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --user cos-python-sdk-v5
-          python3 - <<'PY'
+          cat > "$RUNNER_TEMP/cos_step.py" << 'PY'
           import os, sys
           from pathlib import Path
           from urllib.parse import urlparse
@@ -476,6 +482,7 @@ jobs:
               break
           print("COS 主通道已更新")
           PY
+          python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$RUNNER_TEMP/cos_step.py"
 
       - name: Verify COS serves the new version
         env:
