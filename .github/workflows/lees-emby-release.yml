@@ -100,6 +100,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
           python -B -m unittest discover -s tools/release/tests -v
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed' }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/release/tests/Verify-PayloadTransaction.ps1 -TestDirectory "artifacts/payload-tests"
+          if ($LASTEXITCODE -ne 0) { throw 'Payload transaction tests failed' }
+          ./tools/release/tests/Verify-NsisTransaction.ps1 -TestDirectory "artifacts/nsis-fixture"
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS transaction fixture failed' }
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/release/tests/Verify-UpdateRecovery.ps1 -TestDirectory "artifacts/update-recovery"
+          if ($LASTEXITCODE -ne 0) { throw 'Update helper recovery tests failed' }
       - name: Build signed EXE and update signature
         shell: pwsh
         working-directory: source
