@@ -1,0 +1,216 @@
+name: Lee's PDF 双平台闭源发行
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 私有源码 Tag（例如 v1.0.0）
+        required: true
+        type: string
+      runtime_tag:
+        description: 私有仓中已核对的双平台运行时发行 Tag
+        required: true
+        type: string
+      promote:
+        description: 晋升已有 Draft（先完成双平台最终包验收，不重新构建）
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: lees-pdf-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - id: version
+        env:
+          SOURCE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os,re
+          tag=os.environ['SOURCE_TAG']
+          if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',tag):
+              raise SystemExit('源码 Tag 格式无效')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              output.write(f'version={tag[1:]}\ntag=lees-pdf-{tag}\n')
+          PY
+  build:
+    if: ${{ !inputs.promote }}
+    needs: validate
+    # 一次性 GitHub 托管 runner；私有源码和诊断不进入公开缓存或资产。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x86_64
+            runner: windows-2025
+            runtime_hash_var: LEESPDF_RUNTIME_WINDOWS_SHA256
+          - target: darwin-aarch64
+            runner: macos-26
+            runtime_hash_var: LEESPDF_RUNTIME_MACOS_SHA256
+    runs-on: ${{ matrix.runner }}
+    environment: lees-pdf-release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: release-repo
+          persist-credentials: false
+      - name: 创建仅限 PDF 私有仓的只读令牌
+        id: source
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.SOURCE_APP_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: lyq2010
+          repositories: lees-pdf
+          permission-contents: read
+      - uses: actions/checkout@v7
+        with:
+          repository: lyq2010/lees-pdf
+          ref: ${{ inputs.tag }}
+          path: private-source
+          token: ${{ steps.source.outputs.token }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25.0.4'
+      - name: 准备已固定哈希的私有运行时
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.source.outputs.token }}
+          RUNTIME_TAG: ${{ inputs.runtime_tag }}
+          RUNTIME_SHA256: ${{ vars[matrix.runtime_hash_var] }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: '& release-repo/release-tools/lees-pdf/runtime.ps1'
+      - name: 构建与核对最终包（私有诊断留在隔离 runner）
+        shell: pwsh
+        env:
+          SOURCE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          LEESPDF_COS_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY_PASSWORD }}
+          LEESPDF_WINDOWS_PFX: ${{ secrets.LEESPDF_WINDOWS_PFX_BASE64 }}
+          LEESPDF_WINDOWS_PFX_PASSWORD: ${{ secrets.LEESPDF_WINDOWS_PFX_PASSWORD }}
+        run: |
+          & release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lees-pdf-${{ matrix.target }}
+          path: public-output/*
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+  draft:
+    if: ${{ !inputs.promote }}
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    environment: lees-pdf-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: lees-pdf-*
+          path: public-output
+          merge-multiple: true
+      - name: 核对双端身份，签名发行清单并建立 Draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          LEESPDF_RELEASE_PRIVATE_KEY: ${{ secrets.LEESPDF_RELEASE_PRIVATE_KEY }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+        run: node release-tools/lees-pdf/manifest.mjs public-output
+  mirror:
+    if: ${{ always() && needs.validate.result == 'success' && (needs.draft.result == 'success' || inputs.promote) }}
+    needs: [validate, draft]
+    runs-on: ubuntu-latest
+    environment: lees-pdf-release
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [cos, r2]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 下载已签双端 Draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
+      - name: 安装镜像依赖
+        run: python3 -m pip install cos-python-sdk-v5==1.9.38
+      - name: 上传不可变资产并公网回读
+        env:
+          MIRROR: ${{ matrix.source }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
+          R2_BUCKET: packing-list-releases
+        run: python3 release-tools/lees-pdf/mirror.py stage public-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lees-pdf-ready-${{ matrix.source }}
+          path: public-output/readiness-*.json
+          if-no-files-found: error
+  promote:
+    if: ${{ inputs.promote }}
+    needs: [validate, mirror]
+    runs-on: ubuntu-latest
+    environment: lees-pdf-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: lees-pdf-ready-*
+          path: readiness
+          merge-multiple: true
+      - name: 核对双源就绪屏障
+        run: node release-tools/lees-pdf/barrier.mjs readiness
+      - name: 读取同一 Draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
+      - run: python3 -m pip install cos-python-sdk-v5==1.9.38
+      - name: 最后更新两源 latest，并回读一致性
+        env:
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
+          R2_BUCKET: packing-list-releases
+        run: python3 release-tools/lees-pdf/mirror.py promote public-output
+      - name: 公布发行
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release edit "$PUBLIC_TAG" --repo lyq2010/lee-releases --draft=false --latest=false

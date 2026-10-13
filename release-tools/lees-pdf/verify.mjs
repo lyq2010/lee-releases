@@ -1,0 +1,10 @@
+import {readFileSync} from 'node:fs';
+import {createPublicKey,verify,createHash} from 'node:crypto';
+const outer=JSON.parse(readFileSync(process.argv[2],'utf8'));
+const config=JSON.parse(readFileSync(new URL('./public-config.json',import.meta.url),'utf8'));
+const raw=Buffer.from(outer.release.payloadBase64,'base64');
+const pub=createPublicKey({key:Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),Buffer.from(config.releasePublicKey,'base64')]),format:'der',type:'spki'});
+if(outer.release.keyId!==config.keyId||!verify(null,raw,pub,Buffer.from(outer.release.signatureBase64,'base64')))throw Error('发行清单签名无效');
+const payload=JSON.parse(raw);
+if(payload.product!=='lees-pdf'||payload.channel!=='stable'||payload.schemaVersion!==1||payload.version!==outer.version||Object.keys(payload.platforms).sort().join(',')!=='darwin-aarch64,windows-x86_64')throw Error('发行身份无效');
+process.stdout.write(JSON.stringify({payload,payloadSha256:createHash('sha256').update(raw).digest('hex')}));
