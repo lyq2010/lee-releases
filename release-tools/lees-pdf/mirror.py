@@ -154,7 +154,7 @@ for source in ([env('MIRROR')] if MODE == 'stage' else ['cos', 'r2']):
 # Both sources passed again before either mutable pointer is touched.
 if MODE == 'promote':
     for source in ('cos', 'r2'):
-        request = urllib.request.Request(urllib.parse.urljoin(base(source), 'latest-lees-pdf.json'), headers={'Cache-Control': 'no-cache'})
+        request = urllib.request.Request(urllib.parse.urljoin(base(source), 'latest-lees-pdf.json'), headers={'User-Agent': 'Mozilla/5.0 LeesPDF-Release/1', 'Cache-Control': 'no-cache'})
         try:
             with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
                 previous = response.read(65537)
