@@ -4,7 +4,7 @@
 
 **Lee 系列应用的公开下载与使用中心**
 
-Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以及 Android 音乐播放器。
+Windows 与 macOS 原生工具箱、邮件客户端、PDF 编辑工具、Emby 媒体客户端，以及 Android 音乐播放器。
 
 </div>
 
@@ -15,12 +15,11 @@ Windows 与 macOS 原生工具箱、邮件客户端、Emby 媒体客户端，以
 | [Lee's 系统工具箱](docs/lees-system-toolbox/README.md) | Windows 原生系统维护工具 |
 | [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon 原生业务工具箱，提供建筑板、冷库板等工具 |
 | [Lee's Mail](docs/lees-mail/README.md) | Windows 与 macOS 邮件客户端 |
+| [Lee’s PDF](docs/lees-pdf/README.md) | Windows 与 macOS 本地 PDF 阅读、编辑与扫描处理工具 |
 | [Lee's Emby](docs/lees-emby/README.md) | Windows 原生 Emby 媒体客户端，支持本地播放 |
 | [Lee’s Music](docs/lees-music/README.md) | 连接自建 Navidrome 音乐库的 Android 播放器 |
 
 各产品使用独立的应用身份、安装包、数据目录和更新通道，可以并行安装。
-
-Lee’s PDF 正在准备双平台闭源发行，当前没有正式下载版本。[PDF 发行工作流](.github/workflows/lees-pdf-release.yml)在本仓运行，只发布安装包、更新清单及必要第三方材料，不提供本项目源码。首次执行前须备齐私有冻结运行时、两端哈希配置和Windows自签信任验证；最终包验收后才可晋升Draft，现阶段不能视为已通过发行验证。
 
 ## 下载与版本选择
 
@@ -30,6 +29,8 @@ Lee’s PDF 正在准备双平台闭源发行，当前没有正式下载版本�
 | [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon、macOS 14+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
 | [Lee's Mail for Windows](docs/lees-mail/README.md#windows) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
 | [Lee's Mail for Mac](docs/lees-mail/README.md#mac) | Apple Silicon、macOS 15+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
+| [Lee’s PDF for Windows](docs/lees-pdf/README.md#windows) | Windows 11 24H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) | `lees-pdf-*-windows-x86_64-setup.exe` |
+| [Lee’s PDF for Mac](docs/lees-pdf/README.md#mac) | Apple Silicon、macOS 26+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) | `lees-pdf-*-darwin-aarch64.dmg` |
 | [Lee's Emby](docs/lees-emby/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
 | [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Music&expanded=true) | `lees-music-*.apk` |
 
@@ -41,7 +42,7 @@ Lee’s PDF 正在准备双平台闭源发行，当前没有正式下载版本�
 
 下载所选产品的 `setup.exe`，运行安装程序，完成后从开始菜单启动应用。
 
-[系统工具箱使用说明](docs/lees-system-toolbox/README.md) · [Mail 使用说明](docs/lees-mail/README.md#windows) · [Emby 使用说明](docs/lees-emby/README.md)
+[系统工具箱使用说明](docs/lees-system-toolbox/README.md) · [Mail 使用说明](docs/lees-mail/README.md#windows) · [PDF 使用说明](docs/lees-pdf/README.md#windows) · [Emby 使用说明](docs/lees-emby/README.md)
 
 - **Lee's 系统工具箱**：适用于 Windows 11 22H2+ x64，提供本机系统维护能力。
 - **Lee's Mail for Windows**：安装器请求管理员权限，将内置的 `CN=Lee` 证书导入本机“受信任人”，再安装 MSIX，无需手工导入证书。发行版同时提供原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，供离线校验与高级安装使用。
@@ -51,7 +52,7 @@ Mail 与 Emby 安装后可通过应用内提示更新后续版本。
 
 ### macOS
 
-[工具箱功能与使用说明](docs/lees-toolbox-mac/README.md) · [Mail 功能与使用说明](docs/lees-mail/README.md#mac)
+[工具箱功能与使用说明](docs/lees-toolbox-mac/README.md) · [Mail 功能与使用说明](docs/lees-mail/README.md#mac) · [PDF 功能与使用说明](docs/lees-pdf/README.md#mac)
 
 1. 下载对应产品的 `.dmg`。
 2. 打开 DMG，将应用拖入“应用程序”。

@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       promote:
-        description: 晋升已有 Draft（先完成双平台最终包验收，不重新构建）
+        description: 晋升已有 Draft（双源资产与更新指针回读；最终包由用户验收）
         type: boolean
         default: false
 permissions:
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '25.0.4'
+          java-version: '25.0.4.1'
       - name: 准备已固定哈希的私有运行时
         shell: pwsh
         env:
@@ -209,6 +209,18 @@ jobs:
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           R2_BUCKET: packing-list-releases
         run: python3 release-tools/lees-pdf/mirror.py promote public-output
+      - name: 清理两源 PDF 旧版本并复核最新资产
+        env:
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
+          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
+          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
+          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
+          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
+          R2_BUCKET: packing-list-releases
+        run: python3 release-tools/lees-pdf/mirror.py cleanup public-output
       - name: 公布发行
         env:
           GH_TOKEN: ${{ github.token }}

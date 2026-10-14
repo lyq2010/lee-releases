@@ -1,4 +1,4 @@
-"""Mirror signed PDF releases. Immutable objects are never deleted or overwritten."""
+"""Mirror signed PDF releases. Current immutable objects are never overwritten; old releases are pruned after promotion."""
 import hashlib
 import json
 import os
@@ -115,6 +115,25 @@ def artifacts():
 
 
 files = artifacts()
+if MODE == 'cleanup':
+    from retention import prune
+
+    def verify_current():
+        for source in ('cos', 'r2'):
+            metadata = dict(outer)
+            metadata['platforms'] = {target: {'url': urllib.parse.urljoin(base(source), value['updaterArtifact']['path']), 'signature': value['updaterArtifact']['signature']} for target, value in payload['platforms'].items()}
+            expected = (json.dumps(metadata, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+            for key in ('latest-lees-pdf.json', prefix + 'release-manifest.json'):
+                if public_digest(urllib.parse.urljoin(base(source), key)) != (hashlib.sha256(expected).hexdigest(), len(expected)):
+                    raise RuntimeError('Both promoted pointers must match before pruning')
+            for key, file in files.items():
+                if public_digest(urllib.parse.urljoin(base(source), key)) != (hashlib.sha256(file.read_bytes()).hexdigest(), file.stat().st_size):
+                    raise RuntimeError('Current asset missing: pruning refused')
+
+    verify_current()
+    prune(version, base('cos'))
+    verify_current()
+    sys.exit(0)
 for source in ([env('MIRROR')] if MODE == 'stage' else ['cos', 'r2']):
     if source not in ('cos', 'r2') or MODE not in ('stage', 'promote'):
         raise RuntimeError('Invalid mode/source')

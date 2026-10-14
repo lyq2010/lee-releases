@@ -61,6 +61,8 @@ try {
     Run (Join-Path $env:JAVA_HOME 'bin/jar') @('--create','--file',(Join-Path $runtime 'lees-pdf-core.jar'),'--main-class','pdf.lees.core.Main','-C',$classes,'.')
     Run npm @('ci','--no-audit','--no-fund')
     Run node @('node_modules/typescript/bin/tsc','-p','apps/desktop/tsconfig.json','--noEmit')
+    Run cargo @('fetch','--manifest-path','apps/desktop/src-tauri/Cargo.toml')
+    Run python @('scripts/release/collect-licenses.py',$source,$runtime)
     # Complete license material is a prerequisite, including JDK, PDFium, fonts, native SDKs and models.
     if (!(Test-Path (Join-Path $runtime 'licenses/THIRD-PARTY-NOTICES.txt'))) {throw '冻结运行时缺少完整第三方分发材料'}
     $runtimeFiles=@(Get-ChildItem $runtime -File -Recurse | ForEach-Object {@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');sha256=Hash $_.FullName;size=$_.Length}} | Sort-Object path)
@@ -73,6 +75,12 @@ try {
         $pfx=Join-Path $work 'publisher.pfx';[IO.File]::WriteAllBytes($pfx,[Convert]::FromBase64String($env:LEESPDF_WINDOWS_PFX))
         $cert=Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:LEESPDF_WINDOWS_PFX_PASSWORD -AsPlainText -Force)
         if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($cert.RawData)).ToLowerInvariant() -ne $public.windowsCertificateSha256) {throw 'Windows 发行证书身份错误'}
+        $certificateName="lees-pdf-$version-$target-publisher.cer"
+        $certificateFile=Join-Path $output $certificateName
+        Export-Certificate -Cert $cert -FilePath $certificateFile | Out-Null
+        # Trust only the already hash-verified public certificate on this disposable runner.
+        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
         $config.bundle.targets=@('nsis');$config.bundle.windows=@{certificateThumbprint=$cert.Thumbprint;digestAlgorithm='sha256';timestampUrl='http://timestamp.digicert.com';minimumWebview2Version='109.0.1518.78';nsis=@{installerHooks='windows/file-association-hooks.nsh'}}
     }
     $platformConfig=if($IsMacOS){'apps/desktop/src-tauri/tauri.macos.conf.json'}else{'apps/desktop/src-tauri/tauri.windows.conf.json'}
@@ -95,7 +103,7 @@ try {
     Copy-Item (Join-Path $runtime 'licenses/THIRD-PARTY-NOTICES.txt') (Join-Path $output $noticeName)
     $inventoryName="lees-pdf-$version-$target-runtime.json"
     Copy-Item (Join-Path $runtime 'files.sha256.json') (Join-Path $output $inventoryName)
-    @{target=$target;version=$version;sourceRevision=$revision;bundleId='app.lees.pdf';updater=$updateName;installer=$installName;updaterSignature=(Get-Content ($updater.FullName+'.sig') -Raw -Encoding UTF8).Trim();runtimeManifestSha256=Hash (Join-Path $runtime 'files.sha256.json');signerCertificateSha256=$(if($IsWindows){$public.windowsCertificateSha256}else{$null});materials=@($noticeName,$inventoryName)} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output "$target.json") -Encoding utf8NoBOM
+    @{target=$target;version=$version;sourceRevision=$revision;bundleId='app.lees.pdf';updater=$updateName;installer=$installName;updaterSignature=(Get-Content ($updater.FullName+'.sig') -Raw -Encoding UTF8).Trim();runtimeManifestSha256=Hash (Join-Path $runtime 'files.sha256.json');signerCertificateSha256=$(if($IsWindows){$public.windowsCertificateSha256}else{$null});materials=@($noticeName,$inventoryName)+$(if($IsWindows){@($certificateName)}else{@()})} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output "$target.json") -Encoding utf8NoBOM
     Copy-Item 'apps/desktop/src-tauri/updater/public-config.json' (Join-Path $output "$target-public-config.json")
 } finally {Pop-Location}
 Write-Output "Lee’s PDF $target $version 发行资产已核对；尚未发布"
