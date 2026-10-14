@@ -38,9 +38,29 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write(f'version={tag[1:]}\ntag=lees-pdf-{tag}\n')
           PY
-  build:
+  prepare-draft:
     if: ${{ !inputs.promote }}
     needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 准备公开资产暂存 Draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          if gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json isDraft >/dev/null 2>&1; then
+            test "$(gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json isDraft --jq .isDraft)" = true
+          else
+            gh release create "$PUBLIC_TAG" --repo lyq2010/lee-releases --target main --draft --latest=false --title "Lee’s PDF $RELEASE_VERSION" --notes "双平台发行资产准备中；尚未公布。"
+          fi
+  build:
+    if: ${{ !inputs.promote }}
+    needs: [validate, prepare-draft]
+    permissions:
+      contents: write
     # 一次性 GitHub 托管 runner；私有源码和诊断不进入公开缓存或资产。
     strategy:
       fail-fast: false
@@ -104,13 +124,16 @@ jobs:
           LEESPDF_WINDOWS_PFX_PASSWORD: ${{ secrets.LEESPDF_WINDOWS_PFX_PASSWORD }}
         run: |
           & release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lees-pdf-${{ matrix.target }}
-          path: public-output/*
-          if-no-files-found: error
-          retention-days: 7
-          include-hidden-files: false
+      - name: 将公开构建资产上传同一 Draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          $assets=@(Get-ChildItem public-output -File | ForEach-Object FullName)
+          if(!$assets.Count){throw '公开构建资产缺失'}
+          gh release upload $env:PUBLIC_TAG @assets --repo lyq2010/lee-releases --clobber
+          if($LASTEXITCODE){throw 'Draft 上传失败'}
   draft:
     if: ${{ !inputs.promote }}
     needs: [validate, build]
@@ -122,11 +145,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v5
-        with:
-          pattern: lees-pdf-*
-          path: public-output
-          merge-multiple: true
+      - name: 读取双端 Draft 资产
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
       - name: 核对双端身份，签名发行清单并建立 Draft
         env:
           GH_TOKEN: ${{ github.token }}
@@ -138,6 +161,8 @@ jobs:
   mirror:
     if: ${{ always() && needs.validate.result == 'success' && (needs.draft.result == 'success' || inputs.promote) }}
     needs: [validate, draft]
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     environment: lees-pdf-release
     strategy:
@@ -168,11 +193,11 @@ jobs:
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           R2_BUCKET: packing-list-releases
         run: python3 release-tools/lees-pdf/mirror.py stage public-output
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lees-pdf-ready-${{ matrix.source }}
-          path: public-output/readiness-*.json
-          if-no-files-found: error
+      - name: 上传本轮双源就绪凭据
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release upload "$PUBLIC_TAG" public-output/readiness-*.json --repo lyq2010/lee-releases --clobber
   promote:
     if: ${{ inputs.promote }}
     needs: [validate, mirror]
@@ -184,11 +209,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v5
-        with:
-          pattern: lees-pdf-ready-*
-          path: readiness
-          merge-multiple: true
+      - name: 读取本轮双源就绪凭据
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --pattern 'readiness-*.json' --dir readiness
       - name: 核对双源就绪屏障
         run: node release-tools/lees-pdf/barrier.mjs readiness
       - name: 读取同一 Draft
@@ -221,6 +246,14 @@ jobs:
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           R2_BUCKET: packing-list-releases
         run: python3 release-tools/lees-pdf/mirror.py cleanup public-output
+      - name: 清除 Draft 装配暂存
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          for file in darwin-aarch64.json windows-x86_64.json darwin-aarch64-public-config.json windows-x86_64-public-config.json readiness-cos.json readiness-r2.json; do
+            gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
+          done
       - name: 公布发行
         env:
           GH_TOKEN: ${{ github.token }}

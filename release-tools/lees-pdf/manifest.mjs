@@ -43,4 +43,5 @@ writeFileSync(join(root,'SHA256SUMS'),[...files].map(([name,a])=>`${a.sha256}  $
 writeFileSync(join(root,'release-notes.txt'),notes+'\n');
 // Strict allowlist: never glob private checkout, diagnostics, PDB, maps or source archives.
 const assets=[...files.keys(),'release-manifest.json','SHA256SUMS','release-notes.txt'].map(name=>join(root,name));
-execFileSync('gh',['release','create',tag,'--repo','lyq2010/lee-releases','--draft','--title',`Lee’s PDF ${version}`,'--notes-file',join(root,'release-notes.txt'),...assets],{stdio:'inherit'});
+execFileSync('gh',['release','upload',tag,'--repo','lyq2010/lee-releases','--clobber',...assets],{stdio:'inherit'});
+execFileSync('gh',['release','edit',tag,'--repo','lyq2010/lee-releases','--title',`Lee’s PDF ${version}`,'--notes-file',join(root,'release-notes.txt')],{stdio:'inherit'});
