@@ -23,7 +23,16 @@ $work=Join-Path $env:RUNNER_TEMP ('lees-pdf-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work,$output | Out-Null
 $diagnostics=Join-Path $work 'private-build.log'
 function Run([string]$Command,[string[]]$Arguments) {
-    Write-Output ("Build stage: $Command $($Arguments[0])")
+    $stage=[IO.Path]::GetFileNameWithoutExtension($Command)
+    if($stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign')){throw 'Unknown build stage'}
+    Write-Output ("Build stage: $stage")
+    if($IsWindows){
+        # Only fixed public phase names and time are transferred; no command arguments or log bytes.
+        $statusFile=Join-Path $work 'lees-pdf-build-status-windows-x86_64.json'
+        @{stage=$stage;time=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content $statusFile -Encoding utf8NoBOM
+        & gh release upload $env:PUBLIC_TAG $statusFile --repo lyq2010/lee-releases --clobber
+        if($LASTEXITCODE){throw 'Public build stage transfer failed'}
+    }
     $nativePreference=$PSNativeCommandUseErrorActionPreference
     $PSNativeCommandUseErrorActionPreference=$false
     try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally { $PSNativeCommandUseErrorActionPreference=$nativePreference }
