@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('retention', Path(__file__).resolve().parents[1] / 'retention.py')
 retention = importlib.util.module_from_spec(spec)
@@ -47,6 +48,23 @@ class RetentionTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             retention.cos_keys(Client(), 'bucket', 'lees-pdf/releases/')
 
+
+    def test_r2_pagination_preserves_the_pdf_prefix(self):
+        calls = []
+        def fake_api(method, path, arguments):
+            calls.append((method, path, dict(arguments)))
+            if 'cursor' not in arguments:
+                return {'result': [{'key': 'a'}], 'result_info': {'is_truncated': True, 'cursor': 'next'}}
+            return {'result': [{'key': 'b'}], 'result_info': {'is_truncated': False}}
+        with patch.object(retention, 'api', fake_api):
+            self.assertEqual(retention.r2_keys('/objects'), ['a', 'b'])
+        self.assertEqual(calls[1][2]['cursor'], 'next')
+        self.assertTrue(all(call[2]['prefix'] == 'lees-pdf/releases/' for call in calls))
+
+    def test_invalid_r2_cursor_stops_cleanup(self):
+        with patch.object(retention, 'api', return_value={'result_info': {'is_truncated': True}}):
+            with self.assertRaises(RuntimeError):
+                retention.r2_keys('/objects')
 
 if __name__ == '__main__':
     unittest.main()
