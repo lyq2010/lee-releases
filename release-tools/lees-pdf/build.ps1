@@ -23,6 +23,7 @@ $work=Join-Path $env:RUNNER_TEMP ('lees-pdf-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work,$output | Out-Null
 $diagnostics=Join-Path $work 'private-build.log'
 function Run([string]$Command,[string[]]$Arguments) {
+    Write-Output ("Build stage: $Command $($Arguments[0])")
     $nativePreference=$PSNativeCommandUseErrorActionPreference
     $PSNativeCommandUseErrorActionPreference=$false
     try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally { $PSNativeCommandUseErrorActionPreference=$nativePreference }
