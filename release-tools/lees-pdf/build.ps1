@@ -8,6 +8,12 @@ $version=$env:RELEASE_VERSION
 $target=$env:RELEASE_TARGET
 if ($target -notin @('darwin-aarch64','windows-x86_64') -or $version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {throw '发行输入无效'}
 if (($IsMacOS -and $target -ne 'darwin-aarch64') -or ($IsWindows -and $target -ne 'windows-x86_64') -or (!$IsMacOS -and !$IsWindows)) {throw '构建平台不匹配'}
+# Match the shared mirror convention: a bare COS hostname is an HTTPS base.
+$cosBase=([string]$env:LEESPDF_COS_BASE_URL).Trim().TrimEnd('/')
+if(!$cosBase.Contains('://')){$cosBase='https://'+$cosBase}
+$cosUri=$null
+if(![Uri]::TryCreate($cosBase,[UriKind]::Absolute,[ref]$cosUri) -or $cosUri.Scheme -ne 'https' -or !$cosUri.Host -or $cosUri.UserInfo -or $cosUri.Query -or $cosUri.Fragment){throw 'Clean HTTPS COS base URL is required'}
+$env:LEESPDF_COS_BASE_URL=$cosUri.AbsoluteUri.TrimEnd('/')+'/'
 # The hash-pinned private runtime is extracted into this disposable hosted runner.
 if (!$env:LEESPDF_RUNTIME_ROOT -or !$env:JAVA_HOME) {throw 'runner 缺少 LEESPDF_RUNTIME_ROOT 或完整 JAVA_HOME'}
 $seed=[IO.Path]::GetFullPath($env:LEESPDF_RUNTIME_ROOT)
@@ -90,6 +96,14 @@ try {
     @('--release','25','-encoding','UTF-8','-cp',('"'+(($jars -join [IO.Path]::PathSeparator).Replace('\','/'))+'"'),'-d',('"'+$classes.Replace('\','/')+'"'))+@($javaSources | ForEach-Object {'"'+$_.Replace('\','/')+'"'}) | Set-Content $argumentFile -Encoding utf8NoBOM
     Run (Join-Path $env:JAVA_HOME 'bin/javac') @('@'+$argumentFile)
     Run (Join-Path $env:JAVA_HOME 'bin/jar') @('--create','--file',(Join-Path $runtime 'lees-pdf-core.jar'),'--main-class','pdf.lees.core.Main','-C',$classes,'.')
+    if($IsWindows){
+        $minimalJdk=Join-Path $work 'jdk-minimal'
+        Run (Join-Path $env:JAVA_HOME 'bin/jlink.exe') @('--add-modules','java.base,java.desktop,java.logging,java.net.http,jdk.httpserver','--strip-debug','--no-header-files','--no-man-pages','--output',$minimalJdk)
+        $stagedJdk=[IO.Path]::GetFullPath((Join-Path $runtime 'jdk'))
+        if(!$stagedJdk.StartsWith($work+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'JDK staging path escapes disposable work directory'}
+        Remove-Item -LiteralPath $stagedJdk -Recurse -Force
+        Move-Item -LiteralPath $minimalJdk -Destination $stagedJdk
+    }
     Run npm @('ci','--no-audit','--no-fund')
     Run node @('node_modules/typescript/bin/tsc','-p','apps/desktop/tsconfig.json','--noEmit')
     Run cargo @('fetch','--manifest-path','apps/desktop/src-tauri/Cargo.toml')

@@ -30,6 +30,8 @@ def env(name):
 
 def base(source):
     value = env('COS_PUBLIC_BASE_URL') if source == 'cos' else 'https://plt-releases.leenbsl.workers.dev/'
+    if '://' not in value:
+        value = 'https://' + value
     parsed = urllib.parse.urlsplit(value)
     if parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.query or parsed.fragment:
         raise RuntimeError('Invalid mirror base')

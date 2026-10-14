@@ -35,7 +35,9 @@ const payload={schemaVersion:1,product:'lees-pdf',channel:'stable',releaseId:tag
 const bytes=Buffer.from(JSON.stringify(payload));const signature=sign(null,bytes,key);
 if(!verify(null,bytes,createPublicKey(key),signature))fail();
 const release={keyId:config.keyId,payloadBase64:bytes.toString('base64'),signatureBase64:signature.toString('base64')};
-const cos=new URL(process.env.COS_PUBLIC_BASE_URL.endsWith('/')?process.env.COS_PUBLIC_BASE_URL:process.env.COS_PUBLIC_BASE_URL+'/');
+let cosBase=(process.env.COS_PUBLIC_BASE_URL??'').trim().replace(/\/+$/,'');
+if(!cosBase.includes('://'))cosBase='https://'+cosBase;
+const cos=new URL(cosBase+'/');
 if(cos.protocol!=='https:'||cos.username||cos.password||cos.search||cos.hash)fail();
 const outer={version,notes,pub_date:publishedAt,platforms:Object.fromEntries(Object.entries(platforms).map(([target,p])=>[target,{url:new URL(p.updaterArtifact.path,cos).href,signature:p.updaterArtifact.signature}])),release};
 writeFileSync(join(root,'release-manifest.json'),JSON.stringify(outer,null,2)+'\n');
