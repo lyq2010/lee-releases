@@ -124,6 +124,9 @@ jobs:
         shell: pwsh
         env:
           SOURCE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          LEESPDF_DIAGNOSTICS_PUBLIC_KEY: ${{ vars.LEESPDF_DIAGNOSTICS_PUBLIC_KEY }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
           RELEASE_TARGET: ${{ matrix.target }}
           LEESPDF_COS_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
@@ -261,6 +264,9 @@ jobs:
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: |
           for file in darwin-aarch64.json windows-x86_64.json darwin-aarch64-public-config.json windows-x86_64-public-config.json readiness-cos.json readiness-r2.json; do
+            gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
+          done
+          gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json assets --jq '.assets[].name | select(startswith("lees-pdf-diagnostics-") and endswith(".json"))' | while IFS= read -r file; do
             gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
           done
       - name: 公布发行

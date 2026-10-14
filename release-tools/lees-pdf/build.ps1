@@ -17,8 +17,19 @@ $work=Join-Path $env:RUNNER_TEMP ('lees-pdf-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work,$output | Out-Null
 $diagnostics=Join-Path $work 'private-build.log'
 function Run([string]$Command,[string[]]$Arguments) {
-    & $Command @Arguments *> $diagnostics
-    if ($LASTEXITCODE -ne 0) {throw '构建或验证失败；私有诊断仅保留在隔离 runner'}
+    $nativePreference=$PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference=$false
+    try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally { $PSNativeCommandUseErrorActionPreference=$nativePreference }
+    if ($commandExit -ne 0) {
+        if($env:LEESPDF_DIAGNOSTICS_PUBLIC_KEY){
+            $encrypted=Join-Path $work ("lees-pdf-diagnostics-$target-$($env:GITHUB_RUN_ID).json")
+            & node (Join-Path $PSScriptRoot 'encrypt-diagnostics.mjs') $diagnostics $encrypted
+            if($LASTEXITCODE){throw 'Diagnostic encryption failed; no plaintext uploaded'}
+            & gh release upload $env:PUBLIC_TAG $encrypted --repo lyq2010/lee-releases --clobber
+            if($LASTEXITCODE){throw 'Encrypted diagnostic transfer failed'}
+        }
+        throw 'Build failed; only encrypted diagnostics may be retrieved from the Draft'
+    }
 }
 function Hash([string]$File) {(Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()}
 Push-Location $source
