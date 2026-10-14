@@ -99,10 +99,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '25.0.4.1'
       - name: 准备已固定哈希的私有运行时
         shell: pwsh
         env:
@@ -111,6 +107,11 @@ jobs:
           RUNTIME_SHA256: ${{ vars[matrix.runtime_hash_var] }}
           RELEASE_TARGET: ${{ matrix.target }}
         run: '& release-repo/release-tools/lees-pdf/runtime.ps1'
+      - name: 准备精确 JDK 编译器
+        shell: pwsh
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: '& release-repo/release-tools/lees-pdf/prepare-jdk.ps1'
       - name: 构建与核对最终包（私有诊断留在隔离 runner）
         shell: pwsh
         env:
