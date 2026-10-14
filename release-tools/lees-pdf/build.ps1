@@ -22,17 +22,20 @@ if ($seedIndex.schemaVersion -ne 1 -or $seedIndex.target -ne $target) {throw '�
 $work=Join-Path $env:RUNNER_TEMP ('lees-pdf-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work,$output | Out-Null
 $diagnostics=Join-Path $work 'private-build.log'
+function PublicStage([string]$Stage) {
+    if($Stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign','inventory','certificate-import','trust-import')){throw 'Unknown public build stage'}
+    if($IsWindows){
+        $statusFile=Join-Path $work 'lees-pdf-build-status-windows-x86_64.json'
+        @{stage=$Stage;time=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content $statusFile -Encoding utf8NoBOM
+        & gh release upload $env:PUBLIC_TAG $statusFile --repo lyq2010/lee-releases --clobber
+        if($LASTEXITCODE){throw 'Public build stage transfer failed'}
+    }
+}
 function Run([string]$Command,[string[]]$Arguments) {
     $stage=[IO.Path]::GetFileNameWithoutExtension($Command)
     if($stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign')){throw 'Unknown build stage'}
     Write-Output ("Build stage: $stage")
-    if($IsWindows){
-        # Only fixed public phase names and time are transferred; no command arguments or log bytes.
-        $statusFile=Join-Path $work 'lees-pdf-build-status-windows-x86_64.json'
-        @{stage=$stage;time=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content $statusFile -Encoding utf8NoBOM
-        & gh release upload $env:PUBLIC_TAG $statusFile --repo lyq2010/lee-releases --clobber
-        if($LASTEXITCODE){throw 'Public build stage transfer failed'}
-    }
+    PublicStage $stage
     $nativePreference=$PSNativeCommandUseErrorActionPreference
     $PSNativeCommandUseErrorActionPreference=$false
     try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally { $PSNativeCommandUseErrorActionPreference=$nativePreference }
@@ -120,6 +123,7 @@ try {
     Run python @('scripts/release/collect-licenses.py',$source,$runtime)
     # Complete license material is a prerequisite, including JDK, PDFium, fonts, native SDKs and models.
     if (!(Test-Path (Join-Path $runtime 'licenses/THIRD-PARTY-NOTICES.txt'))) {throw '冻结运行时缺少完整第三方分发材料'}
+    PublicStage inventory
     $runtimeFiles=@(Get-ChildItem $runtime -File -Recurse | ForEach-Object {@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');sha256=Hash $_.FullName;size=$_.Length}} | Sort-Object path)
     @{schemaVersion=1;target=$target;files=$runtimeFiles} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $runtime 'files.sha256.json') -Encoding utf8NoBOM
     $config=@{bundle=@{resources=@{};createUpdaterArtifacts=$true};plugins=@{updater=@{pubkey=$public.updaterPublicKey}}}
@@ -127,6 +131,7 @@ try {
     if ($IsMacOS) {$config.bundle.targets=@('app','dmg');$config.bundle.macOS=@{signingIdentity='-';minimumSystemVersion='26.0'}}
     else {
         if (!$env:LEESPDF_WINDOWS_PFX -or !$env:LEESPDF_WINDOWS_PFX_PASSWORD) {throw '公开仓缺少本产品 Windows 签名证书 Secret'}
+        PublicStage certificate-import
         $pfx=Join-Path $work 'publisher.pfx';[IO.File]::WriteAllBytes($pfx,[Convert]::FromBase64String($env:LEESPDF_WINDOWS_PFX))
         $cert=Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:LEESPDF_WINDOWS_PFX_PASSWORD -AsPlainText -Force)
         if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($cert.RawData)).ToLowerInvariant() -ne $public.windowsCertificateSha256) {throw 'Windows 发行证书身份错误'}
@@ -134,8 +139,9 @@ try {
         $certificateFile=Join-Path $output $certificateName
         Export-Certificate -Cert $cert -FilePath $certificateFile | Out-Null
         # Trust only the already hash-verified public certificate on this disposable runner.
-        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
+        PublicStage trust-import
+        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
         $config.bundle.targets=@('nsis');$config.bundle.windows=@{certificateThumbprint=$cert.Thumbprint;digestAlgorithm='sha256';timestampUrl='http://timestamp.digicert.com';minimumWebview2Version='109.0.1518.78';nsis=@{installerHooks='windows/file-association-hooks.nsh'}}
     }
     $platformConfig=if($IsMacOS){'apps/desktop/src-tauri/tauri.macos.conf.json'}else{'apps/desktop/src-tauri/tauri.windows.conf.json'}
