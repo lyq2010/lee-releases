@@ -58,7 +58,7 @@ try {
     $classes=Join-Path $work 'classes';New-Item -ItemType Directory -Path $classes | Out-Null
     $javaSources=@(Get-ChildItem 'services/pdf-core/src/main/java' -Recurse -Filter '*.java' | ForEach-Object FullName)
     $argumentFile=Join-Path $work 'javac.args'
-    @('--release','25','-encoding','UTF-8','-cp',('"'+($jars -join [IO.Path]::PathSeparator)+'"'),'-d',('"'+$classes+'"'))+@($javaSources | ForEach-Object {'"'+$_.Replace('\','/')+'"'}) | Set-Content $argumentFile -Encoding utf8NoBOM
+    @('--release','25','-encoding','UTF-8','-cp',('"'+(($jars -join [IO.Path]::PathSeparator).Replace('\','/'))+'"'),'-d',('"'+$classes.Replace('\','/')+'"'))+@($javaSources | ForEach-Object {'"'+$_.Replace('\','/')+'"'}) | Set-Content $argumentFile -Encoding utf8NoBOM
     Run (Join-Path $env:JAVA_HOME 'bin/javac') @('@'+$argumentFile)
     Run (Join-Path $env:JAVA_HOME 'bin/jar') @('--create','--file',(Join-Path $runtime 'lees-pdf-core.jar'),'--main-class','pdf.lees.core.Main','-C',$classes,'.')
     Run npm @('ci','--no-audit','--no-fund')
