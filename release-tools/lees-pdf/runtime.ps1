@@ -16,3 +16,14 @@ if ($LASTEXITCODE -ne 0) {throw '运行时解压失败'}
 $root=Join-Path $directory 'runtime'
 if (!(Test-Path (Join-Path $root 'files.sha256.json'))) {throw '运行时清单缺失'}
 "LEESPDF_RUNTIME_ROOT=$root" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
+if($env:RELEASE_TARGET -eq 'windows-x86_64'){
+    if($env:RUNTIME_SOURCES_SHA256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'Windows source normalization identity is missing'}
+    $sourceName='lees-pdf-runtime-windows-x86_64-sources.json'
+    & gh release download $env:RUNTIME_TAG --repo lyq2010/lees-pdf --pattern $sourceName --dir $directory
+    if($LASTEXITCODE){throw 'Private source identity download failed'}
+    $sourceIndex=Join-Path $directory $sourceName
+    if((Get-FileHash $sourceIndex).Hash -ne $env:RUNTIME_SOURCES_SHA256){throw 'Source normalization identity mismatch'}
+    "LEESPDF_RUNTIME_SOURCE_INDEX=$sourceIndex" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+    "LEESPDF_RUNTIME_ARCHIVE_SHA256=$($env:RUNTIME_SHA256)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+}

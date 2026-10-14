@@ -45,9 +45,27 @@ try {
         New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
         Copy-Item -LiteralPath $file -Destination $destination
     }
+    $sourceHashes=@{}
+    if($env:LEESPDF_RUNTIME_SOURCE_INDEX){
+        $identity=Get-Content $env:LEESPDF_RUNTIME_SOURCE_INDEX -Raw -Encoding UTF8 | ConvertFrom-Json
+        if($target -ne 'windows-x86_64' -or $identity.schemaVersion -ne 1 -or $identity.target -ne $target -or $identity.runtimeArchiveSha256 -ne $env:LEESPDF_RUNTIME_ARCHIVE_SHA256 -or $identity.sourceRevision -ne $revision){throw 'Canonical source identity does not bind this runtime and source Tag'}
+        foreach($item in $identity.nativeSources){
+            if($sourceHashes.ContainsKey($item.path)){throw 'Duplicate canonical native source'}
+            $sourceHashes[$item.path]=$item
+        }
+        if($sourceHashes.Count -ne $seedIndex.nativeSources.Count){throw 'Canonical source coverage differs'}
+    }
     # Worker source hashes bind frozen native binaries to this exact source revision.
+
     foreach ($entry in $seedIndex.nativeSources) {
-        if ($entry.path -notmatch '^native/(scan-worker|font-worker)/' -or $entry.path.Contains('..') -or (Hash (Join-Path $source $entry.path)) -ne $entry.sha256) {throw '原生 worker 与当前源码不匹配，须重新准备冻结运行时'}
+        if ($entry.path -notmatch '^native/(scan-worker|font-worker)/' -or $entry.path.Contains('..')){throw 'Invalid native source path'}
+        if($sourceHashes.Count){
+            $expected=$sourceHashes[$entry.path]
+            if(!$expected -or $expected.frozenSha256 -ne $entry.sha256){throw 'Canonical source is not tied to the frozen compiler input'}
+            $content=[Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes((Join-Path $source $entry.path))).Replace("`r`n","`n")
+            $actual=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($content))).ToLowerInvariant()
+            if($actual -ne $expected.sha256){throw 'Native source differs beyond line endings'}
+        }elseif((Hash (Join-Path $source $entry.path)) -ne $entry.sha256){throw 'Native worker source identity mismatch'}
     }
     $nativeFiles=@(& git ls-files native/scan-worker native/font-worker | Sort-Object)
     $boundFiles=@($seedIndex.nativeSources | ForEach-Object path | Sort-Object -Unique)

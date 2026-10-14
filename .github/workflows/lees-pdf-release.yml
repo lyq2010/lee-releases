@@ -10,6 +10,11 @@ on:
         description: 私有仓中已核对的双平台运行时发行 Tag
         required: true
         type: string
+      platform:
+        description: 构建平台；单端重试复用同一 Draft 已核对的另一端资产
+        type: choice
+        default: all
+        options: [all, windows-x86_64, darwin-aarch64]
       promote:
         description: 晋升已有 Draft（双源资产与更新指针回读；最终包由用户验收）
         type: boolean
@@ -25,18 +30,27 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      matrix: ${{ steps.version.outputs.matrix }}
     steps:
       - id: version
         env:
           SOURCE_TAG: ${{ inputs.tag }}
+          BUILD_PLATFORM: ${{ inputs.platform }}
         run: |
           python3 - <<'PY'
-          import os,re
+          import os,re,json
           tag=os.environ['SOURCE_TAG']
           if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',tag):
               raise SystemExit('源码 Tag 格式无效')
+          platform=os.environ.get('BUILD_PLATFORM') or 'all'
+          rows=[{'target':'windows-x86_64','runner':'windows-2025','runtime_hash_var':'LEESPDF_RUNTIME_WINDOWS_SHA256'}, {'target':'darwin-aarch64','runner':'macos-26','runtime_hash_var':'LEESPDF_RUNTIME_MACOS_SHA256'}]
+          if platform not in ('all','windows-x86_64','darwin-aarch64'):
+              raise SystemExit('构建平台无效')
+          if platform != 'all':
+              rows=[row for row in rows if row['target']==platform]
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write(f'version={tag[1:]}\ntag=lees-pdf-{tag}\n')
+              output.write('matrix='+json.dumps({'include':rows},separators=(',',':'))+'\n')
           PY
   prepare-draft:
     if: ${{ !inputs.promote }}
@@ -64,14 +78,7 @@ jobs:
     # 一次性 GitHub 托管 runner；私有源码和诊断不进入公开缓存或资产。
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: windows-x86_64
-            runner: windows-2025
-            runtime_hash_var: LEESPDF_RUNTIME_WINDOWS_SHA256
-          - target: darwin-aarch64
-            runner: macos-26
-            runtime_hash_var: LEESPDF_RUNTIME_MACOS_SHA256
+      matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     environment: lees-pdf-release
     steps:
@@ -106,6 +113,7 @@ jobs:
           RUNTIME_TAG: ${{ inputs.runtime_tag }}
           RUNTIME_SHA256: ${{ vars[matrix.runtime_hash_var] }}
           RELEASE_TARGET: ${{ matrix.target }}
+          RUNTIME_SOURCES_SHA256: ${{ vars.LEESPDF_RUNTIME_WINDOWS_SOURCES_SHA256 }}
         run: '& release-repo/release-tools/lees-pdf/runtime.ps1'
       - name: 准备精确 JDK 编译器
         shell: pwsh
