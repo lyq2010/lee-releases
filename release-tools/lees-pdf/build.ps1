@@ -23,6 +23,8 @@ function Run([string]$Command,[string[]]$Arguments) {
 function Hash([string]$File) {(Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()}
 Push-Location $source
 try {
+    # Match native source bytes to the Windows checkout used for the frozen worker build.
+    if($IsWindows){Run git @('-c','core.autocrlf=true','checkout-index','--force','--all')}
     $revision=(& git rev-parse HEAD).Trim()
     if ((& git rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revision) {throw 'Tag 与源码不一致'}
     Run git @('merge-base','--is-ancestor',$revision,'origin/main')
