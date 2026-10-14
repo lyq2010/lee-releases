@@ -211,7 +211,7 @@ jobs:
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: gh release upload "$PUBLIC_TAG" public-output/readiness-*.json --repo lyq2010/lee-releases --clobber
   promote:
-    if: ${{ inputs.promote }}
+    if: ${{ always() && inputs.promote && needs.validate.result == 'success' && needs.mirror.result == 'success' }}
     needs: [validate, mirror]
     runs-on: ubuntu-latest
     environment: lees-pdf-release
