@@ -19,6 +19,9 @@ spec.loader.exec_module(mirror)
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
+        sleeper = patch.object(mirror.time, 'sleep')
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
         parent = Path(os.environ.get('LEES_TEST_OUTPUT', Path(tempfile.gettempdir()) / 'lees-pdf-release-tests'))
         parent.mkdir(parents=True, exist_ok=True)
         self.root = Path(tempfile.mkdtemp(dir=parent))
@@ -162,10 +165,31 @@ class ReleaseTests(unittest.TestCase):
                 mirror.put('r2', self.asset['path'], self.root / Path(self.asset['path']).name)
             command.assert_not_called()
 
+    def test_short_public_read_retries_until_full_identity_matches(self):
+        expected = ('a' * 64, 100)
+        with patch.object(mirror, 'public_digest', side_effect=[('partial', 13), expected]) as read, \
+             patch.object(mirror.time, 'sleep'):
+            self.assertEqual(mirror.readback_digest('https://r2.example/asset', expected), expected)
+            self.assertEqual(read.call_count, 2)
+
+    def test_short_public_read_has_a_fixed_attempt_limit(self):
+        expected = ('a' * 64, 100)
+        with patch.object(mirror, 'public_digest', return_value=('partial', 13)) as read, \
+             patch.object(mirror.time, 'sleep'):
+            self.assertNotEqual(mirror.readback_digest('https://r2.example/asset', expected), expected)
+            self.assertEqual(read.call_count, 3)
+
+    def test_full_length_corruption_and_missing_objects_are_not_retried(self):
+        expected = ('a' * 64, 100)
+        for actual in [('wrong', 100), None]:
+            with self.subTest(actual=actual), patch.object(mirror, 'public_digest', return_value=actual) as read:
+                self.assertNotEqual(mirror.readback_digest('https://r2.example/asset', expected), expected)
+                self.assertEqual(read.call_count, 1)
+
     def test_wrong_public_readback_fails_upload(self):
         with patch.dict(os.environ, {'LEESPDF_WRANGLER_CLI': '/tools/wrangler.js', 'CF_ACCOUNT_ID': 'test-account',
                                      'CF_API_TOKEN': 'synthetic-token', 'R2_BUCKET': 'test-bucket'}), \
-             patch.object(mirror, 'public_digest', side_effect=[None, ('wrong', 1)]), \
+             patch.object(mirror, 'public_digest', side_effect=[None] + [('wrong', 1)] * 3), \
              patch.object(mirror.subprocess, 'run'):
             with self.assertRaisesRegex(RuntimeError, 'readback'):
                 mirror.put('r2', self.asset['path'], self.root / Path(self.asset['path']).name)

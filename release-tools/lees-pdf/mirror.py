@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -58,10 +59,23 @@ def public_digest(url):
     return digest.hexdigest(), size
 
 
+def readback_digest(url, expected):
+    # A 200 response may end early without urllib raising IncompleteRead.
+    # Only retry short bodies; every accepted attempt must match both full size and SHA-256.
+    for attempt in range(3):
+        actual = public_digest(url)
+        if actual == expected or actual is None or actual[1] >= expected[1]:
+            return actual
+        if attempt < 2:
+            print(f'Short public response: {actual[1]}/{expected[1]} bytes; retry {attempt + 1}/2', flush=True)
+            time.sleep(attempt + 1)
+    return actual
+
+
 def put(source, key, file, mutable=False):
     expected = (hashlib.sha256(file.read_bytes()).hexdigest(), file.stat().st_size)
     url = urllib.parse.urljoin(base(source), key)
-    existing = public_digest(url)
+    existing = public_digest(url) if mutable else readback_digest(url, expected)
     if existing == expected:
         return
     if existing is not None and not mutable:
@@ -85,7 +99,7 @@ def put(source, key, file, mutable=False):
             account = accounts['result'][0]['id']
         command_env['CLOUDFLARE_ACCOUNT_ID'] = account
         subprocess.run(['node', env('LEESPDF_WRANGLER_CLI'), 'r2', 'object', 'put', f'{env("R2_BUCKET")}/{key}', '--file', str(file), '--remote', '--cache-control', 'no-cache' if mutable else 'public, max-age=31536000, immutable'], env=command_env, check=True)
-    if public_digest(url) != expected:
+    if readback_digest(url, expected) != expected:
         raise RuntimeError('Public mirror readback does not match')
 
 
@@ -154,11 +168,11 @@ class Release:
         digest = (hashlib.sha256(expected).hexdigest(), len(expected))
         for key in ([self.prefix + 'release-manifest.json', 'latest-lees-pdf.json'] if pointers
                     else [self.prefix + 'release-manifest.json']):
-            if public_digest(urllib.parse.urljoin(base(source), key)) != digest:
+            if readback_digest(urllib.parse.urljoin(base(source), key), digest) != digest:
                 raise RuntimeError('Mirror manifest does not match signed release')
         if assets:
             for key, expected in self.expected.items():
-                actual = public_digest(urllib.parse.urljoin(base(source), key))
+                actual = readback_digest(urllib.parse.urljoin(base(source), key), expected)
                 if actual != expected:
                     raise RuntimeError(f'Current asset missing or changed: {source} {key}; expected={expected}, actual={actual}')
 
