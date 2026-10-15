@@ -30,7 +30,7 @@ for(const [index,row] of rows.entries()){
  for(const name of row.materials)artifact(name,null);
 }
 const publishedAt=new Date().toISOString().replace(/\.\d{3}Z$/,'Z');
-const notes=`Lee’s PDF ${version}（Windows x64 / macOS Apple Silicon）。安装前请保存并关闭文档。`;
+const notes=`Lee’s PDF ${version}（Windows x64 / macOS Apple Silicon）。应用内更新会询问未保存内容，并在重启后恢复已保存文档。`;
 const payload={schemaVersion:1,product:'lees-pdf',channel:'stable',releaseId:tag,version,sourceRevision:rows[0].sourceRevision,publishedAt,notes,platforms};
 const bytes=Buffer.from(JSON.stringify(payload));const signature=sign(null,bytes,key);
 if(!verify(null,bytes,createPublicKey(key),signature))fail();
