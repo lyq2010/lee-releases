@@ -7,6 +7,14 @@ $source=[IO.Path]::GetFullPath($SourceRoot)
 . (Join-Path $PSScriptRoot 'runtime-inputs.ps1')
 Push-Location $source
 try {
+    # Fail before expensive native builds if the runner toolchain layout is unsupported.
+    $installation=& 'C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe' -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if(!$installation){throw 'Visual C++ toolchain is missing'}
+    $redist=Get-LeesPdfCrtDirectory $installation
+    foreach($name in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll')){
+        $signature=Get-AuthenticodeSignature -LiteralPath (Join-Path $redist $name)
+        if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation'){throw 'Compiler CRT signature mismatch'}
+    }
     $sdk=Join-Path $source '.tools/release-sdk'
     $seed=Join-Path $sdk 'seed'
     New-Item -ItemType Directory -Path $seed | Out-Null
@@ -46,19 +54,11 @@ try {
     & pwsh -NoProfile -File scripts/prepare-scan-opencv.ps1
     & pwsh -NoProfile -File scripts/build-scan-worker.ps1
     & pwsh -NoProfile -File scripts/build-font-worker.ps1
-    # The CRT comes from the installed compiler toolchain, never an unversioned download.
-    $installation=& 'C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe' -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    if(!$installation){throw 'Visual C++ toolchain is missing'}
-    $redistVersion=(Get-Content -LiteralPath (Join-Path $installation 'VC/Auxiliary/Build/Microsoft.VCRedistVersion.default.txt') -Raw).Trim()
-    if($redistVersion -notmatch '^14\.\d+\.\d+$'){throw 'Unexpected compiler CRT version'}
-    $redist=Join-Path $installation "VC/Redist/MSVC/$redistVersion/x64/Microsoft.VC143.CRT"
     $scan=Join-Path $source '.tools/scan-runtime'
     $font=Join-Path $source '.tools/font-runtime'
     New-Item -ItemType Directory -Path (Join-Path $scan 'licenses'),(Join-Path $font 'licenses') | Out-Null
     foreach($name in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll')){
         $file=Join-Path $redist $name
-        $signature=Get-AuthenticodeSignature -LiteralPath $file
-        if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation'){throw 'Compiler CRT signature mismatch'}
         Copy-Item -LiteralPath $file -Destination $scan
         Copy-Item -LiteralPath $file -Destination $font
     }

@@ -17,3 +17,15 @@ function Assert-LeesPdfNativeSources([string]$SourceRoot,$Index) {
     $tracked=@(& git -C $SourceRoot ls-files native/scan-worker native/font-worker | Sort-Object)
     if($LASTEXITCODE -or $tracked.Count -lt 2 -or @(Compare-Object $tracked @($bound.Keys | Sort-Object)).Count){throw 'Runtime must bind the complete native source list'}
 }
+function Get-LeesPdfCrtDirectory([string]$Installation) {
+    $version=(Get-Content -LiteralPath (Join-Path $Installation 'VC/Auxiliary/Build/Microsoft.VCRedistVersion.default.txt') -Raw).Trim()
+    if($version -notmatch '^14\.\d+\.\d+$'){throw 'Unexpected compiler CRT version'}
+    $base=Join-Path $Installation "VC/Redist/MSVC/$version/x64"
+    $names=@('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll')
+    $candidates=@(Get-ChildItem -LiteralPath $base -Directory -Filter 'Microsoft.VC*.CRT' | Where-Object {
+        $directory=$_.FullName
+        @($names | Where-Object {!(Test-Path -LiteralPath (Join-Path $directory $_) -PathType Leaf)}).Count -eq 0
+    })
+    if($candidates.Count -ne 1){throw 'Compiler CRT resource directory is missing or ambiguous'}
+    return $candidates[0].FullName
+}
