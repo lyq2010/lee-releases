@@ -79,7 +79,7 @@ class ReleaseTests(unittest.TestCase):
 
     def test_missing_backup_blocks_all_writes_and_cleanup(self):
         self.store.pop(mirror.base('r2') + self.asset['path'])
-        with self.assertRaisesRegex(RuntimeError, 'asset'):
+        with self.assertRaisesRegex(RuntimeError, 'r2.*lees-pdf-test-setup.exe'):
             self.run_release()
         self.assertFalse(self.writes)
         self.assertFalse(self.deleted)

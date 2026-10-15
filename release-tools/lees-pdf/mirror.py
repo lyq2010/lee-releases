@@ -158,8 +158,9 @@ class Release:
                 raise RuntimeError('Mirror manifest does not match signed release')
         if assets:
             for key, expected in self.expected.items():
-                if public_digest(urllib.parse.urljoin(base(source), key)) != expected:
-                    raise RuntimeError('Current asset missing or changed')
+                actual = public_digest(urllib.parse.urljoin(base(source), key))
+                if actual != expected:
+                    raise RuntimeError(f'Current asset missing or changed: {source} {key}; expected={expected}, actual={actual}')
 
     def verify_both(self, pointers=False, assets=True):
         with ThreadPoolExecutor(max_workers=2) as pool:
