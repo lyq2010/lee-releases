@@ -142,7 +142,9 @@ try {
         PublicStage trust-import
         Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
         Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
-        $config.bundle.targets=@('nsis');$config.bundle.windows=@{certificateThumbprint=$cert.Thumbprint;digestAlgorithm='sha256';timestampUrl='http://timestamp.digicert.com';minimumWebview2Version='109.0.1518.78';nsis=@{installerHooks='windows/file-association-hooks.nsh'}}
+        $config.bundle.targets=@('nsis')
+        . (Join-Path $PSScriptRoot 'windows-config.ps1')
+        $config.bundle.windows=New-LeesPdfWindowsConfig -SourceRoot $source -CertificateThumbprint $cert.Thumbprint
     }
     $platformConfig=if($IsMacOS){'apps/desktop/src-tauri/tauri.macos.conf.json'}else{'apps/desktop/src-tauri/tauri.windows.conf.json'}
     # Replace this disposable checkout's platform resource mapping, so old .tools paths cannot be merged in.
