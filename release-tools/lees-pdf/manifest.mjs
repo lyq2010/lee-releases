@@ -1,3 +1,4 @@
+import {validateReleaseNotes} from './release-notes.mjs';
 import {readFileSync,writeFileSync,readdirSync} from 'node:fs';
 import {createHash,createPrivateKey,createPublicKey,sign,verify} from 'node:crypto';
 import {join,basename} from 'node:path';
@@ -8,6 +9,8 @@ if(!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version??'')||tag!==`lees-
 const read=name=>JSON.parse(readFileSync(join(root,name),'utf8'));
 const targets=['darwin-aarch64','windows-x86_64'];
 const rows=targets.map(target=>read(`${target}.json`));
+const releaseNotes=validateReleaseNotes(rows[0].releaseNotes,version);
+if(rows.some(row=>validateReleaseNotes(row.releaseNotes,version)!==releaseNotes))fail();
 const config=read('darwin-aarch64-public-config.json');
 if(JSON.stringify(config)!==JSON.stringify(read('windows-x86_64-public-config.json')))fail();
 const key=createPrivateKey(process.env.LEESPDF_RELEASE_PRIVATE_KEY);
@@ -42,7 +45,7 @@ if(cos.protocol!=='https:'||cos.username||cos.password||cos.search||cos.hash)fai
 const outer={version,notes,pub_date:publishedAt,platforms:Object.fromEntries(Object.entries(platforms).map(([target,p])=>[target,{url:new URL(p.updaterArtifact.path,cos).href,signature:p.updaterArtifact.signature}])),release};
 writeFileSync(join(root,'release-manifest.json'),JSON.stringify(outer,null,2)+'\n');
 writeFileSync(join(root,'SHA256SUMS'),[...files].map(([name,a])=>`${a.sha256}  ${name}`).join('\n')+'\n');
-writeFileSync(join(root,'release-notes.txt'),notes+'\n');
+writeFileSync(join(root,'release-notes.txt'),releaseNotes);
 // Strict allowlist: never glob private checkout, diagnostics, PDB, maps or source archives.
 const assets=['release-manifest.json','SHA256SUMS','release-notes.txt'].map(name=>join(root,name));
 execFileSync('gh',['release','upload',tag,'--repo','lyq2010/lee-releases','--clobber',...assets],{stdio:'inherit'});

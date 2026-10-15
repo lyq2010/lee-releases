@@ -18,7 +18,7 @@ function fixture(){
  for(const target of ['darwin-aarch64','windows-x86_64']){
   const updater=`lees-pdf-1.0.1-${target}.bin`,material=`lees-pdf-1.0.1-${target}-NOTICES.txt`;
   writeFileSync(join(root,updater),'synthetic installer');writeFileSync(join(root,material),'synthetic notices');
-  writeFileSync(join(root,`${target}.json`),JSON.stringify({target,version:'1.0.1',sourceRevision:'a'.repeat(40),bundleId:'app.lees.pdf',updater,installer:updater,updaterSignature:'synthetic updater signature',runtimeManifestSha256:'b'.repeat(64),signerCertificateSha256:target.startsWith('windows')?config.windowsCertificateSha256:null,materials:[material]}));
+  writeFileSync(join(root,`${target}.json`),JSON.stringify({target,version:'1.0.1',sourceRevision:'a'.repeat(40),bundleId:'app.lees.pdf',updater,installer:updater,updaterSignature:'synthetic updater signature',runtimeManifestSha256:'b'.repeat(64),releaseNotes:'## 1.0.1 (2026-10-15)\n\n- 更新流程改进。\n- 设置修复。\n',signerCertificateSha256:target.startsWith('windows')?config.windowsCertificateSha256:null,materials:[material]}));
   writeFileSync(join(root,`${target}-public-config.json`),JSON.stringify(config));
  }
  writeFileSync(join(root,'private-source.ts'),'private sentinel; must never be uploaded');
@@ -54,5 +54,19 @@ test('different source revisions cannot be assembled',async()=>{
 });
 test('wrong signing identity cannot be assembled',async()=>{
  const f=fixture();f.privateKey=generateKeyPairSync('ed25519').privateKey;
+ await assert.rejects(assemble(f),/发行资产或签名身份不一致/);
+});
+
+test('GitHub release body uses version changelog while signed updater summary stays concise',async()=>{
+ const f=fixture();await assemble(f);
+ const releaseNotes=readFileSync(join(f.root,'release-notes.txt'),'utf8');
+ assert.match(releaseNotes,/更新流程改进/);assert.match(releaseNotes,/设置修复/);
+ assert.ok(!releaseNotes.includes('private sentinel'));
+ const outer=JSON.parse(readFileSync(join(f.root,'release-manifest.json')));
+ assert.ok(!outer.notes.includes('设置修复'));
+});
+test('different platform changelogs cannot be published together',async()=>{
+ const f=fixture(),path=join(f.root,'windows-x86_64.json'),row=JSON.parse(readFileSync(path));
+ row.releaseNotes='## 1.0.1\n\n- Different changes.\n';writeFileSync(path,JSON.stringify(row));
  await assert.rejects(assemble(f),/发行资产或签名身份不一致/);
 });

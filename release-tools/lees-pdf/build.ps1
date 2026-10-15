@@ -61,6 +61,8 @@ try {
     $desktop=Get-Content 'apps/desktop/package.json' -Raw -Encoding UTF8 | ConvertFrom-Json
     $cargo=Get-Content 'apps/desktop/src-tauri/Cargo.toml' -Raw -Encoding UTF8
     if ($tauri.version -ne $version -or $desktop.version -ne $version -or $cargo -notmatch ('(?m)^version\s*=\s*"'+[regex]::Escape($version)+'"') -or $tauri.identifier -ne 'app.lees.pdf') {throw '单一发行版本与配置不同步'}
+    $notesFile=Join-Path $work 'release-notes.txt'
+    Run node @((Join-Path $PSScriptRoot 'release-notes.mjs'),$source,$version,$notesFile)
     $public=Get-Content 'apps/desktop/src-tauri/updater/public-config.json' -Raw -Encoding UTF8 | ConvertFrom-Json
     $expected=Get-Content (Join-Path $PSScriptRoot 'public-config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($public.releasePublicKey -ne $expected.releasePublicKey -or $public.updaterPublicKey -ne $expected.updaterPublicKey) {throw '公私仓发行公钥不一致'}
@@ -162,7 +164,7 @@ try {
     Copy-Item (Join-Path $runtime 'licenses/THIRD-PARTY-NOTICES.txt') (Join-Path $output $noticeName)
     $inventoryName="lees-pdf-$version-$target-runtime.json"
     Copy-Item (Join-Path $runtime 'files.sha256.json') (Join-Path $output $inventoryName)
-    @{target=$target;version=$version;sourceRevision=$revision;bundleId='app.lees.pdf';updater=$updateName;installer=$installName;updaterSignature=(Get-Content ($updater.FullName+'.sig') -Raw -Encoding UTF8).Trim();runtimeManifestSha256=Hash (Join-Path $runtime 'files.sha256.json');signerCertificateSha256=$(if($IsWindows){$public.windowsCertificateSha256}else{$null});materials=@($noticeName,$inventoryName)+$(if($IsWindows){@($certificateName)}else{@()})} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output "$target.json") -Encoding utf8NoBOM
+    @{target=$target;version=$version;releaseNotes=(Get-Content -LiteralPath $notesFile -Raw -Encoding UTF8);sourceRevision=$revision;bundleId='app.lees.pdf';updater=$updateName;installer=$installName;updaterSignature=(Get-Content ($updater.FullName+'.sig') -Raw -Encoding UTF8).Trim();runtimeManifestSha256=Hash (Join-Path $runtime 'files.sha256.json');signerCertificateSha256=$(if($IsWindows){$public.windowsCertificateSha256}else{$null});materials=@($noticeName,$inventoryName)+$(if($IsWindows){@($certificateName)}else{@()})} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output "$target.json") -Encoding utf8NoBOM
     Copy-Item 'apps/desktop/src-tauri/updater/public-config.json' (Join-Path $output "$target-public-config.json")
 } finally {Pop-Location}
 Write-Output "Lee’s PDF $target $version 发行资产已核对；尚未发布"
