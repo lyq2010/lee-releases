@@ -14,9 +14,10 @@ if(!$cosBase.Contains('://')){$cosBase='https://'+$cosBase}
 $cosUri=$null
 if(![Uri]::TryCreate($cosBase,[UriKind]::Absolute,[ref]$cosUri) -or $cosUri.Scheme -ne 'https' -or !$cosUri.Host -or $cosUri.UserInfo -or $cosUri.Query -or $cosUri.Fragment){throw 'Clean HTTPS COS base URL is required'}
 $env:LEESPDF_COS_BASE_URL=$cosUri.AbsoluteUri.TrimEnd('/')+'/'
-# The hash-pinned private runtime is extracted into this disposable hosted runner.
+# Dependencies and native workers are prepared on this same disposable runner.
 if (!$env:LEESPDF_RUNTIME_ROOT -or !$env:JAVA_HOME) {throw 'runner 缺少 LEESPDF_RUNTIME_ROOT 或完整 JAVA_HOME'}
 $seed=[IO.Path]::GetFullPath($env:LEESPDF_RUNTIME_ROOT)
+if((Get-FileHash -LiteralPath (Join-Path $seed 'files.sha256.json')).Hash.ToLowerInvariant() -ne $env:LEESPDF_RUNTIME_INDEX_SHA256){throw 'Prepared runtime inventory changed'}
 $seedIndex=Get-Content (Join-Path $seed 'files.sha256.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($seedIndex.schemaVersion -ne 1 -or $seedIndex.target -ne $target) {throw '冻结运行时清单不匹配'}
 $work=Join-Path $env:RUNNER_TEMP ('lees-pdf-'+[guid]::NewGuid().ToString('N'))
@@ -52,9 +53,8 @@ function Run([string]$Command,[string[]]$Arguments) {
 function Hash([string]$File) {(Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()}
 Push-Location $source
 try {
-    # Match native source bytes to the Windows checkout used for the frozen worker build.
-    if($IsWindows){Run git @('-c','core.autocrlf=true','checkout-index','--force','--all')}
     $revision=(& git rev-parse HEAD).Trim()
+    if($seedIndex.sourceRevision -ne $revision){throw 'Prepared runtime source revision mismatch'}
     if ((& git rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revision) {throw 'Tag 与源码不一致'}
     Run git @('merge-base','--is-ancestor',$revision,'origin/main')
     $tauri=Get-Content 'apps/desktop/src-tauri/tauri.conf.json' -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -76,31 +76,8 @@ try {
         New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
         Copy-Item -LiteralPath $file -Destination $destination
     }
-    $sourceHashes=@{}
-    if($env:LEESPDF_RUNTIME_SOURCE_INDEX){
-        $identity=Get-Content $env:LEESPDF_RUNTIME_SOURCE_INDEX -Raw -Encoding UTF8 | ConvertFrom-Json
-        if($target -ne 'windows-x86_64' -or $identity.schemaVersion -ne 1 -or $identity.target -ne $target -or $identity.runtimeArchiveSha256 -ne $env:LEESPDF_RUNTIME_ARCHIVE_SHA256 -or $identity.sourceRevision -ne $revision){throw 'Canonical source identity does not bind this runtime and source Tag'}
-        foreach($item in $identity.nativeSources){
-            if($sourceHashes.ContainsKey($item.path)){throw 'Duplicate canonical native source'}
-            $sourceHashes[$item.path]=$item
-        }
-        if($sourceHashes.Count -ne $seedIndex.nativeSources.Count){throw 'Canonical source coverage differs'}
-    }
-    # Worker source hashes bind frozen native binaries to this exact source revision.
-
-    foreach ($entry in $seedIndex.nativeSources) {
-        if ($entry.path -notmatch '^native/(scan-worker|font-worker)/' -or $entry.path.Contains('..')){throw 'Invalid native source path'}
-        if($sourceHashes.Count){
-            $expected=$sourceHashes[$entry.path]
-            if(!$expected -or $expected.frozenSha256 -ne $entry.sha256){throw 'Canonical source is not tied to the frozen compiler input'}
-            $content=[Text.UTF8Encoding]::new($false,$true).GetString([IO.File]::ReadAllBytes((Join-Path $source $entry.path))).Replace("`r`n","`n")
-            $actual=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($content))).ToLowerInvariant()
-            if($actual -ne $expected.sha256){throw 'Native source differs beyond line endings'}
-        }elseif((Hash (Join-Path $source $entry.path)) -ne $entry.sha256){throw 'Native worker source identity mismatch'}
-    }
-    $nativeFiles=@(& git ls-files native/scan-worker native/font-worker | Sort-Object)
-    $boundFiles=@($seedIndex.nativeSources | ForEach-Object path | Sort-Object -Unique)
-    if ($nativeFiles.Count -lt 2 -or @(Compare-Object $nativeFiles $boundFiles).Count -ne 0) {throw '冻结运行时必须绑定完整 worker 来源清单'}
+    . (Join-Path $PSScriptRoot 'runtime-inputs.ps1')
+    Assert-LeesPdfNativeSources $source $seedIndex
     $dependencies=Get-Content 'services/pdf-core/DEPENDENCIES.json' -Raw -Encoding UTF8 | ConvertFrom-Json
     $jars=@($dependencies.runtimeJars | ForEach-Object {Join-Path $runtime ('m2/'+(Split-Path $_ -Leaf))})
     foreach($jar in $jars) {if((Hash $jar) -ne $dependencies.sha256.(Split-Path $jar -Leaf)){throw 'Java 依赖哈希不匹配'}}
@@ -118,7 +95,6 @@ try {
         Remove-Item -LiteralPath $stagedJdk -Recurse -Force
         Move-Item -LiteralPath $minimalJdk -Destination $stagedJdk
     }
-    Run npm @('ci','--no-audit','--no-fund')
     Run cargo @('fetch','--manifest-path','apps/desktop/src-tauri/Cargo.toml')
     Run python @('scripts/release/collect-licenses.py',$source,$runtime)
     # Complete license material is a prerequisite, including JDK, PDFium, fonts, native SDKs and models.

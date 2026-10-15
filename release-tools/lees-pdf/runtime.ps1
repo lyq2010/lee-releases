@@ -1,29 +1,55 @@
 #Requires -Version 7.0
+param([Parameter(Mandatory)][string]$SourceRoot)
 $ErrorActionPreference='Stop'
 $PSNativeCommandUseErrorActionPreference=$true
-if ($env:RUNTIME_TAG -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$' -or $env:RUNTIME_SHA256 -notmatch '^[a-fA-F0-9]{64}$' -or $env:RELEASE_TARGET -notin @('windows-x86_64','darwin-aarch64')) {throw '私有运行时 Tag、平台或公开仓固定 SHA-256 变量未配置'}
-$directory=Join-Path $env:RUNNER_TEMP ('lees-pdf-runtime-'+[guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $directory | Out-Null
-$name="lees-pdf-runtime-$($env:RELEASE_TARGET).tar.gz"
-& gh release download $env:RUNTIME_TAG --repo lyq2010/lees-pdf --pattern $name --dir $directory
-if($LASTEXITCODE -ne 0){throw '私有运行时下载失败'}
-$archive=Join-Path $directory $name
-if ((Get-FileHash $archive).Hash -ne $env:RUNTIME_SHA256) {throw '私有运行时归档哈希不匹配'}
-$entries=& tar -tzf $archive
-if ($entries | Where-Object {$_ -match '(^/|^[A-Za-z]:|\\|(^|/)\.\.(/|$))' -or $_ -notmatch '^runtime(/|$)'}) {throw '运行时归档包含越界路径'}
-& tar -xzf $archive -C $directory
-if ($LASTEXITCODE -ne 0) {throw '运行时解压失败'}
-$root=Join-Path $directory 'runtime'
-if (!(Test-Path (Join-Path $root 'files.sha256.json'))) {throw '运行时清单缺失'}
-"LEESPDF_RUNTIME_ROOT=$root" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-
-if($env:RELEASE_TARGET -eq 'windows-x86_64'){
-    if($env:RUNTIME_SOURCES_SHA256 -notmatch '^[a-fA-F0-9]{64}$'){throw 'Windows source normalization identity is missing'}
-    $sourceName='lees-pdf-runtime-windows-x86_64-sources.json'
-    & gh release download $env:RUNTIME_TAG --repo lyq2010/lees-pdf --pattern $sourceName --dir $directory
-    if($LASTEXITCODE){throw 'Private source identity download failed'}
-    $sourceIndex=Join-Path $directory $sourceName
-    if((Get-FileHash $sourceIndex).Hash -ne $env:RUNTIME_SOURCES_SHA256){throw 'Source normalization identity mismatch'}
-    "LEESPDF_RUNTIME_SOURCE_INDEX=$sourceIndex" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-    "LEESPDF_RUNTIME_ARCHIVE_SHA256=$($env:RUNTIME_SHA256)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+$source=[IO.Path]::GetFullPath($SourceRoot)
+$target=$env:RELEASE_TARGET
+if(($IsWindows -and $target -ne 'windows-x86_64') -or ($IsMacOS -and $target -ne 'darwin-aarch64') -or (!$IsWindows -and !$IsMacOS)){throw 'Dependency preparation target mismatch'}
+if($env:SOURCE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'){throw 'Invalid source Tag'}
+$revision=(& git -C $source rev-parse HEAD).Trim()
+if((& git -C $source rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revision){throw 'Source Tag differs from checkout'}
+& git -C $source merge-base --is-ancestor $revision origin/main
+if($LASTEXITCODE){throw 'Source Tag is not on main'}
+# Normalize before compilation and indexing, never after native inputs have been hashed.
+if($IsWindows){& git -C $source -c core.autocrlf=true checkout-index --force --all}
+$output=Join-Path $env:RUNNER_TEMP 'pdf-runtime'
+$diagnostics=Join-Path $env:RUNNER_TEMP "lees-pdf-prepare-$target.log"
+$elapsed=[Diagnostics.Stopwatch]::StartNew()
+Write-Output 'Build stage: dependency-preparation'
+$nativePreference=$PSNativeCommandUseErrorActionPreference
+$PSNativeCommandUseErrorActionPreference=$false
+try {
+    if($IsWindows){
+        & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'prepare-windows.ps1') -SourceRoot $source -OutputRoot $output *> $diagnostics
+    }else{
+        & npm --prefix $source ci --no-audit --no-fund *> $diagnostics
+        if($LASTEXITCODE -eq 0){& bash (Join-Path $source 'scripts/release/prepare-macos.sh') *>> $diagnostics}
+    }
+    $commandExit=$LASTEXITCODE
+}finally{
+    $PSNativeCommandUseErrorActionPreference=$nativePreference
+    $elapsed.Stop()
+    Write-Output ('Build stage duration: dependency-preparation {0:F1}s' -f $elapsed.Elapsed.TotalSeconds)
 }
+if($commandExit -ne 0){
+    if($env:LEESPDF_DIAGNOSTICS_PUBLIC_KEY){
+        $encrypted=Join-Path $env:RUNNER_TEMP "lees-pdf-diagnostics-prepare-$target-$($env:GITHUB_RUN_ID).json"
+        & node (Join-Path $PSScriptRoot 'encrypt-diagnostics.mjs') $diagnostics $encrypted
+        if($LASTEXITCODE){throw 'Dependency diagnostic encryption failed'}
+        & gh release upload $env:PUBLIC_TAG $encrypted --repo lyq2010/lee-releases --clobber
+        if($LASTEXITCODE){throw 'Encrypted dependency diagnostic transfer failed'}
+    }
+    throw 'Dependency preparation failed; plaintext stays on the disposable runner'
+}
+$runtime=Join-Path $output 'runtime'
+$indexFile=Join-Path $runtime 'files.sha256.json'
+$index=Get-Content -LiteralPath $indexFile -Raw -Encoding UTF8 | ConvertFrom-Json
+if($index.schemaVersion -ne 1 -or $index.target -ne $target){throw 'Prepared runtime target mismatch'}
+. (Join-Path $PSScriptRoot 'runtime-inputs.ps1')
+Assert-LeesPdfNativeSources $source $index
+$index | Add-Member -NotePropertyName sourceRevision -NotePropertyValue $revision
+$index | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $indexFile -Encoding utf8NoBOM
+$jdk=if($IsWindows){Join-Path $runtime 'jdk'}else{Join-Path $source '.tools/release-sdk/jdk/Contents/Home'}
+"JAVA_HOME=$jdk" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+"LEESPDF_RUNTIME_ROOT=$runtime" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+"LEESPDF_RUNTIME_INDEX_SHA256=$((Get-FileHash -LiteralPath $indexFile).Hash.ToLowerInvariant())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append

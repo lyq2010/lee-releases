@@ -6,10 +6,6 @@ on:
         description: 私有源码 Tag（例如 v1.0.0）
         required: true
         type: string
-      runtime_tag:
-        description: 私有仓中已核对的双平台运行时发行 Tag
-        required: true
-        type: string
       platform:
         description: 构建平台；单端重试复用同一 Draft 已核对的另一端资产
         type: choice
@@ -43,7 +39,7 @@ jobs:
           if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',tag):
               raise SystemExit('源码 Tag 格式无效')
           platform=os.environ.get('BUILD_PLATFORM') or 'all'
-          rows=[{'target':'windows-x86_64','runner':'windows-2025','runtime_hash_var':'LEESPDF_RUNTIME_WINDOWS_SHA256'}, {'target':'darwin-aarch64','runner':'macos-26','runtime_hash_var':'LEESPDF_RUNTIME_MACOS_SHA256'}]
+          rows=[{'target':'windows-x86_64','runner':'windows-2025'}, {'target':'darwin-aarch64','runner':'macos-26'}]
           if platform not in ('all','windows-x86_64','darwin-aarch64'):
               raise SystemExit('构建平台无效')
           if platform != 'all':
@@ -118,16 +114,16 @@ jobs:
           key: lees-pdf-public-crates-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('private-source/apps/desktop/src-tauri/Cargo.lock') }}
           restore-keys: |
             lees-pdf-public-crates-v1-${{ runner.os }}-${{ runner.arch }}-
-      - name: 准备已固定哈希的私有运行时
+      - name: 在隔离 runner 从固定来源准备依赖与原生组件
         shell: pwsh
         env:
-          GH_TOKEN: ${{ steps.source.outputs.token }}
-          RUNTIME_TAG: ${{ inputs.runtime_tag }}
-          RUNTIME_SHA256: ${{ vars[matrix.runtime_hash_var] }}
+          SOURCE_TAG: ${{ inputs.tag }}
           RELEASE_TARGET: ${{ matrix.target }}
-          RUNTIME_SOURCES_SHA256: ${{ vars.LEESPDF_RUNTIME_WINDOWS_SOURCES_SHA256 }}
-        run: '& release-repo/release-tools/lees-pdf/runtime.ps1'
-      - name: 准备精确 JDK 编译器
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
+          LEESPDF_DIAGNOSTICS_PUBLIC_KEY: ${{ vars.LEESPDF_DIAGNOSTICS_PUBLIC_KEY }}
+        run: '& release-repo/release-tools/lees-pdf/runtime.ps1 -SourceRoot private-source'
+      - name: 核对精确 JDK 编译器
         shell: pwsh
         env:
           RELEASE_TARGET: ${{ matrix.target }}

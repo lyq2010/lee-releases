@@ -12,6 +12,21 @@ def job(name):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_release_prepares_dependencies_on_runner_without_private_archives(self):
+        build = job('build')
+        self.assertNotIn('runtime_tag:', WORKFLOW)
+        self.assertNotIn('RUNTIME_SHA256:', build)
+        self.assertIn('SOURCE_TAG: ${{ inputs.tag }}', build)
+        self.assertIn('runtime.ps1 -SourceRoot private-source', build)
+        runtime = (ROOT / 'release-tools/lees-pdf/runtime.ps1').read_text(encoding='utf-8')
+        self.assertNotIn('gh release download', runtime)
+        self.assertIn('prepare-windows.ps1', runtime)
+        self.assertIn('scripts/release/prepare-macos.sh', runtime)
+        self.assertIn('LEESPDF_RUNTIME_INDEX_SHA256=', runtime)
+        publisher = (ROOT / 'release-tools/lees-pdf/build.ps1').read_text(encoding='utf-8')
+        self.assertIn('$seedIndex.sourceRevision -ne $revision', publisher)
+        self.assertIn('Assert-LeesPdfNativeSources', publisher)
+        self.assertNotIn('LEESPDF_RUNTIME_SOURCE_INDEX', publisher)
     def test_promotion_skips_staging_and_uses_one_verified_release_operation(self):
         self.assertIn('!inputs.promote', job('mirror'))
         promotion = job('promote')
