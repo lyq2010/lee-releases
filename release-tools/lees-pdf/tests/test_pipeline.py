@@ -16,6 +16,7 @@ class PipelineTests(unittest.TestCase):
         build = job('build')
         self.assertNotIn('runtime_tag:', WORKFLOW)
         self.assertNotIn('RUNTIME_SHA256:', build)
+        self.assertIn("PYTHONUTF8: '1'", build)
         self.assertIn('SOURCE_TAG: ${{ inputs.tag }}', build)
         self.assertIn('runtime.ps1 -SourceRoot private-source', build)
         runtime = (ROOT / 'release-tools/lees-pdf/runtime.ps1').read_text(encoding='utf-8')

@@ -77,6 +77,8 @@ jobs:
       matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     environment: lees-pdf-release
+    env:
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v7
         with:
