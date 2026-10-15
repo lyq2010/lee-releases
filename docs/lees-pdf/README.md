@@ -13,7 +13,7 @@
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-333333?logo=apple&logoColor=white)
 ![私有源码](https://img.shields.io/badge/源码-私有-64748B)
 
-[下载版本](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+[下载版本](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
 
 </div>
 
@@ -46,8 +46,8 @@ OCR、字体拟合和办公格式转换会受原稿、字体及版面影响，�
 
 | 平台 | 系统要求 | 安装包 | 更新记录 |
 | --- | --- | --- | --- |
-| Windows | Windows 11 24H2+、x64 | `lees-pdf-*-windows-x86_64-setup.exe` | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) |
-| Mac | macOS 26+、Apple Silicon | `lees-pdf-*-darwin-aarch64.dmg` | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) |
+| Windows | Windows 11 24H2+、x64 | `lees-pdf-*-windows-x86_64-setup.exe` | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) |
+| Mac | macOS 26+、Apple Silicon | `lees-pdf-*-darwin-aarch64.dmg` | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) |
 
 ### Windows
 

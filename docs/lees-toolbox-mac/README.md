@@ -13,7 +13,7 @@
 ![Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-64748B)
 ![内部使用](https://img.shields.io/badge/使用范围-公司内部-C4956A)
 
-[下载版本](https://github.com/lyq2010/lee-releases/releases?q=native-v&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=native-v&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+[下载版本](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+Toolbox+Mac%22&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+Toolbox+Mac%22&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
 
 </div>
 
@@ -40,7 +40,7 @@
 
 ## 开始使用
 
-1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=native-v&expanded=true) 下载 `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg`。
+1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+Toolbox+Mac%22&expanded=true) 下载 `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg`。
 2. 打开 DMG，将应用拖入「应用程序」。
 3. 首次打开若被系统阻止，前往「系统设置 → 隐私与安全性」确认允许。
 4. 选择建筑板、冷库板或日常工具，按页面提示添加文件并执行。

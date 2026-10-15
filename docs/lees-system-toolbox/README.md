@@ -13,7 +13,7 @@
 ![x64](https://img.shields.io/badge/架构-x64-64748B)
 ![专有许可](https://img.shields.io/badge/License-Proprietary-blue)
 
-[下载版本](https://github.com/lyq2010/lee-releases/releases?q=lees-system-toolbox&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=lees-system-toolbox&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+[下载版本](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1%22&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1%22&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
 
 </div>
 
@@ -41,7 +41,7 @@
 
 ## 开始使用
 
-1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=lees-system-toolbox&expanded=true) 下载 `lees-system-toolbox_*_x64-setup.exe`。
+1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1%22&expanded=true) 下载 `lees-system-toolbox_*_x64-setup.exe`。
 2. 运行安装程序，完成后从开始菜单打开工具箱。
 3. 选择需要的工具；清理时先扫描、查看明细，再确认执行。
 

@@ -25,14 +25,14 @@ Windows 与 macOS 原生工具箱、邮件客户端、PDF 编辑工具、Emby �
 
 | 版本 | 适用系统 | 下载入口 | 安装文件 |
 |---|---|---|---|
-| [Lee's 系统工具箱](docs/lees-system-toolbox/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
-| [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon、macOS 14+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%E2%80%99s%20Toolbox%20Mac&expanded=true) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
-| [Lee's Mail for Windows](docs/lees-mail/README.md#windows) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) | `LeesMail_*_x64-setup.exe` |
-| [Lee's Mail for Mac](docs/lees-mail/README.md#mac) | Apple Silicon、macOS 15+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) | `LeesMail-*-arm64.dmg` |
-| [Lee’s PDF for Windows](docs/lees-pdf/README.md#windows) | Windows 11 24H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) | `lees-pdf-*-windows-x86_64-setup.exe` |
-| [Lee’s PDF for Mac](docs/lees-pdf/README.md#mac) | Apple Silicon、macOS 26+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=lees-pdf-v&expanded=true) | `lees-pdf-*-darwin-aarch64.dmg` |
-| [Lee's Emby](docs/lees-emby/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Emby&expanded=true) | `LeesEmby_*_x64-setup.exe` |
-| [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Music&expanded=true) | `lees-music-*.apk` |
+| [Lee's 系统工具箱](docs/lees-system-toolbox/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+%E7%B3%BB%E7%BB%9F%E5%B7%A5%E5%85%B7%E7%AE%B1%22&expanded=true) | `lees-system-toolbox_*_x64-setup.exe` |
+| [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon、macOS 14+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+Toolbox+Mac%22&expanded=true) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
+| [Lee's Mail for Windows](docs/lees-mail/README.md#windows) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Windows%22&expanded=true) | `LeesMail_*_x64-setup.exe` |
+| [Lee's Mail for Mac](docs/lees-mail/README.md#mac) | Apple Silicon、macOS 15+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Mac%22&expanded=true) | `LeesMail-*-arm64.dmg` |
+| [Lee’s PDF for Windows](docs/lees-pdf/README.md#windows) | Windows 11 24H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) | `lees-pdf-*-windows-x86_64-setup.exe` |
+| [Lee’s PDF for Mac](docs/lees-pdf/README.md#mac) | Apple Silicon、macOS 26+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) | `lees-pdf-*-darwin-aarch64.dmg` |
+| [Lee's Emby](docs/lees-emby/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Emby%22&expanded=true) | `LeesEmby_*_x64-setup.exe` |
+| [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Music%22&expanded=true) | `lees-music-*.apk` |
 
 请通过对应产品的下载入口选择版本。仓库的 Latest 标记只代表一个产品，不作为其他产品的下载依据。各平台的安装步骤与使用说明见下方对应章节。
 

@@ -13,7 +13,7 @@
 ![macOS 15+](https://img.shields.io/badge/macOS-15%2B-333333?logo=apple&logoColor=white)
 ![GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue)
 
-[下载 Windows 版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) · [下载 Mac 版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+[下载 Windows 版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Windows%22&expanded=true) · [下载 Mac 版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Mac%22&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
 
 </div>
 
@@ -46,8 +46,8 @@ Mac 版提供本地邮件同步与三栏邮件工作流。邮箱凭据交由本�
 
 | 平台 | 系统要求 | 安装包 | 更新记录 |
 | --- | --- | --- | --- |
-| Windows | Windows 11 22H2+、x64 | `LeesMail_*_x64-setup.exe` | [Windows 发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Windows&expanded=true) |
-| Mac | macOS 15+、Apple Silicon | `LeesMail-*-arm64.dmg` | [Mac 发行版](https://github.com/lyq2010/lee-releases/releases?q=Lee%27s%20Mail%20for%20Mac&expanded=true) |
+| Windows | Windows 11 22H2+、x64 | `LeesMail_*_x64-setup.exe` | [Windows 发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Windows%22&expanded=true) |
+| Mac | macOS 15+、Apple Silicon | `LeesMail-*-arm64.dmg` | [Mac 发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Mac%22&expanded=true) |
 
 ### Windows
 

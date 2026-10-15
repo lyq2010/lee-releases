@@ -12,7 +12,7 @@
 ![Windows 11 22H2+](https://img.shields.io/badge/Windows-11_22H2%2B-0078D4)
 ![mpv](https://img.shields.io/badge/播放内核-mpv-8B7CF8)
 
-[下载版本](https://github.com/lyq2010/lee-releases/releases?q=lees-emby&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=lees-emby&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
+[下载版本](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Emby%22&expanded=true) · [更新记录](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Emby%22&expanded=true) · [反馈问题](https://github.com/lyq2010/lee-releases/issues)
 
 Copyright © 2026 lyq2010
 
@@ -42,7 +42,7 @@ Copyright © 2026 lyq2010
 
 ## 开始使用
 
-1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=lees-emby&expanded=true) 下载 `LeesEmby_*_x64-setup.exe`。
+1. 在 [Releases](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Emby%22&expanded=true) 下载 `LeesEmby_*_x64-setup.exe`。
 2. 运行安装程序；应用安装到当前用户目录，无需管理员权限。
 3. 打开应用，填写自己的 Emby 服务器地址并登录；也可选择本地播放，无需服务器账户。
 4. 浏览片库或打开文件，开始播放。
