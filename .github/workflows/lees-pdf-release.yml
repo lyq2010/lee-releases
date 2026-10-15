@@ -16,7 +16,7 @@ on:
         default: all
         options: [all, windows-x86_64, darwin-aarch64]
       promote:
-        description: 晋升已有 Draft（双源资产与更新指针回读；最终包由用户验收）
+        description: 仅重试已有 Draft 晋升；正常构建完成后会在同一轮直接发布
         type: boolean
         default: false
 permissions:
@@ -228,7 +228,7 @@ jobs:
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: gh release upload "$PUBLIC_TAG" public-output/readiness-${{ matrix.source }}.json --repo lyq2010/lee-releases --clobber
   promote:
-    if: ${{ always() && inputs.promote && needs.validate.result == 'success' && needs.mirror.result == 'skipped' }}
+    if: ${{ always() && needs.validate.result == 'success' && ((!inputs.promote && needs.mirror.result == 'success') || (inputs.promote && needs.mirror.result == 'skipped')) }}
     needs: [validate, mirror]
     runs-on: ubuntu-latest
     environment: lees-pdf-release
