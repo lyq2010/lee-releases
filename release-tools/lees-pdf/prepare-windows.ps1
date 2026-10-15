@@ -19,6 +19,16 @@ try {
     Move-Item -LiteralPath $jdk[0].FullName -Destination (Join-Path $seed 'jdk')
     $env:JAVA_HOME=Join-Path $seed 'jdk'
     & (Join-Path $PSScriptRoot 'prepare-jdk.ps1')
+    # Temurin 24+ ships JMODs separately; this source Tag's freezer requires them.
+    $jmodsArchive=Join-Path $sdk 'jmods.zip'
+    Get-LeesPdfPinnedInput 'https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/OpenJDK25U-jmods_x64_windows_hotspot_25.0.4.1_1.zip' $jmodsArchive 'c6b6b19ba9ab28bb4c15b936a7cef40dedcd99ab69f69109dcb0ffad805f0847'
+    $jmodsPackage=Join-Path $sdk 'jmods-package'
+    Expand-Archive -LiteralPath $jmodsArchive -DestinationPath $jmodsPackage
+    $baseModule=@(Get-ChildItem -LiteralPath $jmodsPackage -Recurse -File -Filter java.base.jmod)
+    if($baseModule.Count -ne 1){throw 'JMOD archive layout mismatch'}
+    Copy-Item -LiteralPath $baseModule[0].Directory.FullName -Destination (Join-Path $env:JAVA_HOME 'jmods') -Recurse
+    $moduleInfo=@(& (Join-Path $env:JAVA_HOME 'bin/jmod.exe') describe (Join-Path $env:JAVA_HOME 'jmods/java.base.jmod'))
+    if($moduleInfo[0] -ne 'java.base@25.0.4.1'){throw 'JMOD version differs from the pinned JDK'}
     & python -m venv (Join-Path $sdk 'python')
     $python=Join-Path $sdk 'python/Scripts/python.exe'
     & $python -m pip install fonttools==4.60.2

@@ -27,6 +27,15 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('$seedIndex.sourceRevision -ne $revision', publisher)
         self.assertIn('Assert-LeesPdfNativeSources', publisher)
         self.assertNotIn('LEESPDF_RUNTIME_SOURCE_INDEX', publisher)
+    def test_temurin_separate_jmods_remain_version_and_hash_pinned(self):
+        windows = (ROOT / 'release-tools/lees-pdf/prepare-windows.ps1').read_text(encoding='utf-8')
+        self.assertIn('OpenJDK25U-jmods_x64_windows_hotspot_25.0.4.1_1.zip', windows)
+        self.assertIn('c6b6b19ba9ab28bb4c15b936a7cef40dedcd99ab69f69109dcb0ffad805f0847', windows)
+        self.assertIn("'java.base@25.0.4.1'", windows)
+        jdk = (ROOT / 'release-tools/lees-pdf/prepare-jdk.ps1').read_text(encoding='utf-8')
+        self.assertIn("'lib/modules'", jdk)
+        self.assertNotIn("'jmods/java.base.jmod'", jdk)
+
     def test_promotion_skips_staging_and_uses_one_verified_release_operation(self):
         self.assertIn('!inputs.promote', job('mirror'))
         promotion = job('promote')

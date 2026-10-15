@@ -10,4 +10,4 @@ foreach($name in @('java','javac','jar','jlink')){
     $file=Join-Path $jdk ('bin/'+$name+$(if($windows){'.exe'}else{''}))
     if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw 'Complete JDK compiler input is missing'}
 }
-if(!(Test-Path -LiteralPath (Join-Path $jdk 'jmods/java.base.jmod') -PathType Leaf)){throw 'JDK module input is missing'}
+if(!(Test-Path -LiteralPath (Join-Path $jdk 'lib/modules') -PathType Leaf)){throw 'JDK module image is missing'}
