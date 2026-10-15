@@ -1,4 +1,4 @@
-name: Lee's PDF 双平台闭源发行
+name: Lee's PDF Release
 on:
   workflow_dispatch:
     inputs:
