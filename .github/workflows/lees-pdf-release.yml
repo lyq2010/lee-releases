@@ -106,6 +106,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
+          package-manager-cache: false
+      - name: 配置公开 Cargo 依赖下载目录
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$([IO.Path]::Combine($env:RUNNER_TEMP,'lees-pdf-public-cargo'))" >> $env:GITHUB_ENV
+      # 只缓存 crates.io 原始归档；私有源码、编译输出、日志和凭据不进入公开缓存。
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.CARGO_HOME }}/registry/cache/index.crates.io-*/*.crate
+          key: lees-pdf-public-crates-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('private-source/apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            lees-pdf-public-crates-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: 准备已固定哈希的私有运行时
         shell: pwsh
         env:
@@ -171,7 +183,7 @@ jobs:
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
         run: node release-tools/lees-pdf/manifest.mjs public-output
   mirror:
-    if: ${{ always() && needs.validate.result == 'success' && (needs.draft.result == 'success' || inputs.promote) }}
+    if: ${{ always() && !inputs.promote && needs.validate.result == 'success' && needs.draft.result == 'success' }}
     needs: [validate, draft]
     permissions:
       contents: write
@@ -192,6 +204,11 @@ jobs:
         run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
       - name: 安装镜像依赖
         run: python3 -m pip install cos-python-sdk-v5==1.9.38
+      - name: 一次安装固定版本 R2 上传工具
+        if: ${{ matrix.source == 'r2' }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
+          echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
       - name: 上传不可变资产并公网回读
         env:
           MIRROR: ${{ matrix.source }}
@@ -211,7 +228,7 @@ jobs:
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: gh release upload "$PUBLIC_TAG" public-output/readiness-${{ matrix.source }}.json --repo lyq2010/lee-releases --clobber
   promote:
-    if: ${{ always() && inputs.promote && needs.validate.result == 'success' && needs.mirror.result == 'success' }}
+    if: ${{ always() && inputs.promote && needs.validate.result == 'success' && needs.mirror.result == 'skipped' }}
     needs: [validate, mirror]
     runs-on: ubuntu-latest
     environment: lees-pdf-release
@@ -221,20 +238,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: 读取本轮双源就绪凭据
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --pattern 'readiness-*.json' --dir readiness
-      - name: 核对双源就绪屏障
-        run: node release-tools/lees-pdf/barrier.mjs readiness
       - name: 读取同一 Draft
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
       - run: python3 -m pip install cos-python-sdk-v5==1.9.38
-      - name: 最后更新两源 latest，并回读一致性
+      - name: 一次安装固定版本 R2 上传工具
+        run: |
+          npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
+          echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
+      - name: 核对双源、晋升更新指针并清理后复核
         env:
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
@@ -245,28 +259,16 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           R2_BUCKET: packing-list-releases
-        run: python3 release-tools/lees-pdf/mirror.py promote public-output
-      - name: 清理两源 PDF 旧版本并复核最新资产
-        env:
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
-          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
-          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
-          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
-          R2_BUCKET: packing-list-releases
-        run: python3 release-tools/lees-pdf/mirror.py cleanup public-output
+        run: python3 release-tools/lees-pdf/mirror.py release public-output
       - name: 清除 Draft 装配暂存
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: |
-          for file in darwin-aarch64.json windows-x86_64.json darwin-aarch64-public-config.json windows-x86_64-public-config.json readiness-cos.json readiness-r2.json lees-pdf-build-status-windows-x86_64.json; do
+          for file in darwin-aarch64.json windows-x86_64.json darwin-aarch64-public-config.json windows-x86_64-public-config.json readiness-cos.json readiness-r2.json; do
             gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
           done
-          gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json assets --jq '.assets[].name | select(startswith("lees-pdf-diagnostics-") and endswith(".json"))' | while IFS= read -r file; do
+          gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json assets --jq '.assets[].name | select((startswith("lees-pdf-diagnostics-") and endswith(".json")) or . == "lees-pdf-build-status-windows-x86_64.json")' | while IFS= read -r file; do
             gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
           done
       - name: 公布发行

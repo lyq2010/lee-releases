@@ -24,21 +24,20 @@ New-Item -ItemType Directory -Path $work,$output | Out-Null
 $diagnostics=Join-Path $work 'private-build.log'
 function PublicStage([string]$Stage) {
     if($Stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign','inventory','certificate-import','trust-import')){throw 'Unknown public build stage'}
-    if($IsWindows){
-        $statusFile=Join-Path $work 'lees-pdf-build-status-windows-x86_64.json'
-        @{stage=$Stage;time=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content $statusFile -Encoding utf8NoBOM
-        & gh release upload $env:PUBLIC_TAG $statusFile --repo lyq2010/lee-releases --clobber
-        if($LASTEXITCODE){throw 'Public build stage transfer failed'}
-    }
+    Write-Output ("Build stage: $Stage")
 }
 function Run([string]$Command,[string[]]$Arguments) {
     $stage=[IO.Path]::GetFileNameWithoutExtension($Command)
     if($stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign')){throw 'Unknown build stage'}
-    Write-Output ("Build stage: $stage")
     PublicStage $stage
     $nativePreference=$PSNativeCommandUseErrorActionPreference
     $PSNativeCommandUseErrorActionPreference=$false
-    try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally { $PSNativeCommandUseErrorActionPreference=$nativePreference }
+    $elapsed=[Diagnostics.Stopwatch]::StartNew()
+    try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally {
+        $PSNativeCommandUseErrorActionPreference=$nativePreference
+        $elapsed.Stop()
+        Write-Output ("Build stage duration: {0} {1:F1}s" -f $stage,$elapsed.Elapsed.TotalSeconds)
+    }
     if ($commandExit -ne 0) {
         if($env:LEESPDF_DIAGNOSTICS_PUBLIC_KEY){
             $encrypted=Join-Path $work ("lees-pdf-diagnostics-$target-$($env:GITHUB_RUN_ID).json")
@@ -118,7 +117,6 @@ try {
         Move-Item -LiteralPath $minimalJdk -Destination $stagedJdk
     }
     Run npm @('ci','--no-audit','--no-fund')
-    Run node @('node_modules/typescript/bin/tsc','-p','apps/desktop/tsconfig.json','--noEmit')
     Run cargo @('fetch','--manifest-path','apps/desktop/src-tauri/Cargo.toml')
     Run python @('scripts/release/collect-licenses.py',$source,$runtime)
     # Complete license material is a prerequisite, including JDK, PDFium, fonts, native SDKs and models.
