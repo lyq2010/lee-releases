@@ -1,3 +1,4 @@
+# COS／R2 验收禁止对象正文回读；仅使用本地文件与 HEAD／对象列表元数据。
 name: Lee’s Toolbox Mac Release
 
 on:
@@ -286,10 +287,12 @@ jobs:
           import json
           import os
           import sys
-          import urllib.request
           from pathlib import Path
           from urllib.parse import urlparse
           from qcloud_cos import CosConfig, CosS3Client
+
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools"))
+          from mirror_metadata import verify_cos
 
           base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
           if "://" not in base:
@@ -311,12 +314,16 @@ jobs:
           item = manifest["platforms"]["darwin-aarch64-native"]
           dmg = Path(urlparse(item["url"]).path).name
           dmg_path = Path("assets") / dmg
+          if (manifest.get("version") != os.environ["VERSION"] or not item.get("signature")
+                  or dmg != f"Lee.s.Toolbox.Mac_{os.environ['VERSION']}_macOS_arm64.dmg"):
+              sys.exit("Local native manifest version, signature or filename mismatch")
           if not dmg_path.is_file():
               sys.exit(f"Missing native DMG: {dmg_path}")
           client.upload_file(Bucket=bucket, LocalFilePath=str(dmg_path), Key=key(dmg), EnableMD5=False)
           item["url"] = f"{base}/{dmg}"
           body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
           client.put_object(Bucket=bucket, Body=body, Key=key("latest-native.json"), ContentType="application/json; charset=utf-8")
+          verify_cos(client, bucket, {key(dmg): dmg_path.stat().st_size, key("latest-native.json"): len(body)})
 
           current_key = key(dmg)
           for object_prefix, suffix in (
@@ -339,12 +346,6 @@ jobs:
                           continue
                   break
 
-          with urllib.request.urlopen(f"{base}/latest-native.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
-              published = json.loads(response.read().decode("utf-8"))
-          if published.get("version") != os.environ["VERSION"]:
-              sys.exit("COS latest-native.json version mismatch")
-          if not published.get("platforms", {}).get("darwin-aarch64-native", {}).get("signature"):
-              sys.exit("COS latest-native.json signature missing")
           print("COS native mirror complete")
           PY
           python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$RUNNER_TEMP/cos_step.py"
@@ -354,6 +355,12 @@ jobs:
     if: ${{ needs.build-native.result == 'success' && (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout mirror metadata helper
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          path: release-repo
       - name: Download native Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -390,6 +397,10 @@ jobs:
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           item = manifest["platforms"]["darwin-aarch64-native"]
           dmg = Path(urlparse(item["url"]).path).name
+          if (manifest.get("version") != os.environ["VERSION"] or not item.get("signature")
+                  or dmg != f"Lee.s.Toolbox.Mac_{os.environ['VERSION']}_macOS_arm64.dmg"
+                  or not (Path("assets") / dmg).is_file()):
+              raise SystemExit("Local native manifest version, signature or DMG mismatch")
           item["url"] = f"{base}/{dmg}"
           manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           print(dmg)
@@ -403,6 +414,7 @@ jobs:
           import sys
           import urllib.parse
           import urllib.request
+          from pathlib import Path
 
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"].strip()
@@ -427,6 +439,13 @@ jobs:
               f"/accounts/{urllib.parse.quote(account_id, safe='')}"
               f"/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
           )
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools"))
+          from mirror_metadata import verify_r2
+          verify_r2(request, bucket_path, {
+              name: (Path("assets") / name).stat().st_size
+              for name in (current, "latest-native.json")
+          })
+
           stale = []
           for prefix, suffix in patterns:
               cursor = ""
@@ -450,6 +469,4 @@ jobs:
               request("DELETE", f"{bucket_path}/{urllib.parse.quote(key, safe='/')}")
               print(f"Deleted old native mirror: {key}")
           PY
-          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-native.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json, os, sys; data=json.load(sys.stdin); item=data.get("platforms", {}).get("darwin-aarch64-native", {}); assert data.get("version") == os.environ["VERSION"]; assert item.get("signature")'
           echo "R2 native mirror complete"

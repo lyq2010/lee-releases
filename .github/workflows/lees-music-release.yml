@@ -180,7 +180,7 @@ jobs:
         TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
         TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
         TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
-      run: python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 tools/release/mirror.py cos
+      run: python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$GITHUB_WORKSPACE/release-repo/release-tools/lees-music/mirror.py" cos
   r2:
     needs: release
     runs-on: ubuntu-latest
@@ -211,10 +211,16 @@ jobs:
     - uses: actions/setup-node@v7
       with:
         node-version: '22'
+    - name: Checkout mirror metadata tooling
+      uses: actions/checkout@v7
+      with:
+        ref: main
+        persist-credentials: false
+        path: release-repo
     - name: Mirror and verify R2
       env:
         CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-      run: python3 tools/release/mirror.py r2
+      run: python3 "$GITHUB_WORKSPACE/release-repo/release-tools/lees-music/mirror.py" r2
 'on':
   workflow_dispatch:
     inputs:

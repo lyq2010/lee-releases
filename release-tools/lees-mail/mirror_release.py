@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a Lee's Mail release mirror and verify its public update feed."""
+"""Publish a Lee's Mail release mirror and verify metadata without downloading remote objects."""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ import hashlib
 import json
 import os
 import subprocess
-import time
-import urllib.error
+import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -17,22 +16,8 @@ from typing import Any
 
 
 MANIFEST_NAME = "latest-lees-mail.json"
-PUBLIC_FIELDS = (
-    "version",
-    "platform",
-    "package",
-    "url",
-    "sha256",
-    "size",
-    "certificateThumbprint",
-    "msixPackage",
-    "msixSha256",
-    "msixSize",
-)
-# Cloudflare Bot Fight Mode rejects Python's default urllib User-Agent with 403.
-VERIFY_USER_AGENT = "Mozilla/5.0 (compatible; LeesMailReleaseVerify/1.0)"
-VERIFY_ATTEMPTS = 5
-VERIFY_RETRY_DELAY_SECONDS = 2.0
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mirror_metadata import verify_cos, verify_r2, r2_path
 
 
 def require_env(name: str) -> str:
@@ -95,58 +80,6 @@ def write_mirror_manifest(manifest: dict[str, Any], manifest_path: Path, base: s
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def open_public(url: str, *, method: str = "GET") -> Any:
-    request = urllib.request.Request(
-        url,
-        method=method,
-        headers={
-            "User-Agent": VERIFY_USER_AGENT,
-            "Cache-Control": "no-cache",
-        },
-    )
-    return urllib.request.urlopen(request, timeout=30)
-
-
-def verify_public(base: str, expected: dict[str, Any], package: Path, msix: Path) -> None:
-    run_id = urllib.parse.quote(os.environ.get("GITHUB_RUN_ID", "manual"), safe="")
-    manifest_url = f"{base}/{MANIFEST_NAME}?verify={run_id}"
-    last_error: Exception | None = None
-
-    for attempt in range(1, VERIFY_ATTEMPTS + 1):
-        try:
-            with open_public(manifest_url) as response:
-                published = json.loads(response.read().decode("utf-8"))
-            mismatches = [field for field in PUBLIC_FIELDS if published.get(field) != expected.get(field)]
-            if mismatches:
-                raise SystemExit(f"Published Lee's Mail manifest mismatch: {', '.join(mismatches)}")
-
-            for asset in (package, msix):
-                with open_public(f"{base}/{asset.name}?verify={run_id}", method="HEAD") as response:
-                    if response.status != 200:
-                        raise SystemExit(f"Lee's Mail mirror asset is not publicly available: {asset.name}")
-            return
-        except urllib.error.HTTPError as error:
-            last_error = error
-            if error.code not in {403, 404, 429, 500, 502, 503, 504} or attempt >= VERIFY_ATTEMPTS:
-                raise
-            print(
-                f"Public mirror verify attempt {attempt}/{VERIFY_ATTEMPTS} got HTTP {error.code}; "
-                f"retrying in {VERIFY_RETRY_DELAY_SECONDS:.0f}s"
-            )
-            time.sleep(VERIFY_RETRY_DELAY_SECONDS)
-        except TimeoutError as error:
-            last_error = error
-            if attempt >= VERIFY_ATTEMPTS:
-                raise
-            print(
-                f"Public mirror verify attempt {attempt}/{VERIFY_ATTEMPTS} timed out; "
-                f"retrying in {VERIFY_RETRY_DELAY_SECONDS:.0f}s"
-            )
-            time.sleep(VERIFY_RETRY_DELAY_SECONDS)
-
-    raise SystemExit(f"Public mirror verify failed after {VERIFY_ATTEMPTS} attempts: {last_error}")
-
-
 def mirror_cos(assets: Path) -> None:
     try:
         from qcloud_cos import CosConfig, CosS3Client
@@ -177,7 +110,7 @@ def mirror_cos(assets: Path) -> None:
         Key=object_key(MANIFEST_NAME),
         ContentType="application/json; charset=utf-8",
     )
-    verify_public(base, manifest, package, msix)
+    verify_cos(client, bucket, {object_key(p.name): p.stat().st_size for p in (package, msix, manifest_path)})
 
     current = {object_key(package.name), object_key(msix.name)}
     marker = ""
@@ -251,7 +184,8 @@ def mirror_r2(assets: Path) -> None:
     wrangler_put(bucket, msix.name, msix, None, command_env)
     write_mirror_manifest(manifest, manifest_path, base, package)
     wrangler_put(bucket, MANIFEST_NAME, manifest_path, "application/json; charset=utf-8", command_env)
-    verify_public(base, manifest, package, msix)
+    verify_r2(lambda method, path, params=None: cloudflare_request(token, method, path, params),
+              r2_path(account_id, bucket), {p.name: p.stat().st_size for p in (package, msix, manifest_path)})
 
     bucket_path = (
         f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/"

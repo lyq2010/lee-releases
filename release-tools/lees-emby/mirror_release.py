@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a Lee's Emby release mirror and verify its public update feed."""
+"""Publish a Lee's Emby release mirror and verify metadata without downloading remote objects."""
 
 from __future__ import annotations
 
@@ -8,31 +8,18 @@ import hashlib
 import json
 import os
 import subprocess
-import time
-import urllib.error
+import sys
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from mirror_retention import cos_keys, prune_old_assets, r2_keys, r2_objects_path, version_tuple
+from mirror_retention import cos_keys, prune_old_assets, r2_keys, r2_objects_path, version_tuple, old_assets
 
 
 MANIFEST_NAME = "latest-lees-emby.json"
-PUBLIC_FIELDS = (
-    "version",
-    "platform",
-    "package",
-    "url",
-    "sha256",
-    "size",
-    "certificateThumbprint",
-    "signature",
-)
-# Cloudflare Bot Fight Mode rejects Python's default urllib User-Agent with 403.
-VERIFY_USER_AGENT = "Mozilla/5.0 (compatible; LeesEmbyReleaseVerify/1.0)"
-VERIFY_ATTEMPTS = 5
-VERIFY_RETRY_DELAY_SECONDS = 2.0
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mirror_metadata import verify_cos, verify_r2, r2_path
 
 
 def require_env(name: str) -> str:
@@ -97,67 +84,10 @@ def write_mirror_manifest(manifest: dict[str, Any], manifest_path: Path, base: s
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def open_public(url: str, *, method: str = "GET") -> Any:
-    request = urllib.request.Request(
-        url,
-        method=method,
-        headers={
-            "User-Agent": VERIFY_USER_AGENT,
-            "Cache-Control": "no-cache",
-        },
-    )
-    return urllib.request.urlopen(request, timeout=30)
-
-
-def reject_downgrade(base: str, version: str) -> None:
-    run_id = urllib.parse.quote(os.environ.get("GITHUB_RUN_ID", "manual"), safe="")
-    try:
-        with open_public(f"{base}/{MANIFEST_NAME}?verify={run_id}") as response:
-            published = json.loads(response.read().decode("utf-8"))
-        if version_tuple(published["version"]) > version_tuple(version):
-            raise SystemExit("Refusing to replace a newer Lee's Emby mirror release")
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-
-
-def verify_public(base: str, expected: dict[str, Any], package: Path) -> None:
-    run_id = urllib.parse.quote(os.environ.get("GITHUB_RUN_ID", "manual"), safe="")
-    manifest_url = f"{base}/{MANIFEST_NAME}?verify={run_id}"
-    last_error: Exception | None = None
-
-    for attempt in range(1, VERIFY_ATTEMPTS + 1):
-        try:
-            with open_public(manifest_url) as response:
-                published = json.loads(response.read().decode("utf-8"))
-            mismatches = [field for field in PUBLIC_FIELDS if published.get(field) != expected.get(field)]
-            if mismatches:
-                raise SystemExit(f"Published Lee's Emby manifest mismatch: {', '.join(mismatches)}")
-
-            with open_public(f"{base}/{package.name}?verify={run_id}", method="HEAD") as response:
-                if response.status != 200:
-                    raise SystemExit(f"Lee's Emby mirror asset is not publicly available: {package.name}")
-            return
-        except urllib.error.HTTPError as error:
-            last_error = error
-            if error.code not in {403, 404, 429, 500, 502, 503, 504} or attempt >= VERIFY_ATTEMPTS:
-                raise
-            print(
-                f"Public mirror verify attempt {attempt}/{VERIFY_ATTEMPTS} got HTTP {error.code}; "
-                f"retrying in {VERIFY_RETRY_DELAY_SECONDS:.0f}s"
-            )
-            time.sleep(VERIFY_RETRY_DELAY_SECONDS)
-        except TimeoutError as error:
-            last_error = error
-            if attempt >= VERIFY_ATTEMPTS:
-                raise
-            print(
-                f"Public mirror verify attempt {attempt}/{VERIFY_ATTEMPTS} timed out; "
-                f"retrying in {VERIFY_RETRY_DELAY_SECONDS:.0f}s"
-            )
-            time.sleep(VERIFY_RETRY_DELAY_SECONDS)
-
-    raise SystemExit(f"Public mirror verify failed after {VERIFY_ATTEMPTS} attempts: {last_error}")
+def reject_downgrade(keys, version, prefix=""):
+    # Existing asset names provide version evidence without reading the remote feed.
+    old_assets(keys, version, prefix)
+    print("防降级已按对象列表核对；远端清单正文版本未验证。")
 
 
 def mirror_cos(assets: Path) -> None:
@@ -182,7 +112,7 @@ def mirror_cos(assets: Path) -> None:
         )
     )
 
-    reject_downgrade(base, manifest["version"])
+    reject_downgrade(cos_keys(client, bucket, prefix), manifest["version"], prefix)
     print(f"Uploading COS asset: {package.name} ({package.stat().st_size} bytes)", flush=True)
     client.upload_file(Bucket=bucket, LocalFilePath=str(package), Key=object_key(package.name), EnableMD5=False)
     print(f"Uploaded COS asset: {package.name}", flush=True)
@@ -193,13 +123,13 @@ def mirror_cos(assets: Path) -> None:
         Key=object_key(MANIFEST_NAME),
         ContentType="application/json; charset=utf-8",
     )
-    verify_public(base, manifest, package)
+    verify_cos(client, bucket, {object_key(p.name): p.stat().st_size for p in (package, manifest_path)})
     prune_old_assets(
         lambda: cos_keys(client, bucket, prefix),
         lambda key: client.delete_object(Bucket=bucket, Key=key),
         manifest["version"], prefix,
     )
-    verify_public(base, manifest, package)
+    verify_cos(client, bucket, {object_key(p.name): p.stat().st_size for p in (package, manifest_path)})
 
     print("COS Lee's Emby mirror complete")
 
@@ -252,17 +182,19 @@ def mirror_r2(assets: Path) -> None:
 
     command_env = os.environ.copy()
     command_env["CLOUDFLARE_ACCOUNT_ID"] = account_id
-    reject_downgrade(base, manifest["version"])
+    reject_downgrade(r2_keys(cloudflare_request, token, account_id, bucket), manifest["version"])
     wrangler_put(bucket, package.name, package, None, command_env)
     write_mirror_manifest(manifest, manifest_path, base, package)
     wrangler_put(bucket, MANIFEST_NAME, manifest_path, "application/json; charset=utf-8", command_env)
-    verify_public(base, manifest, package)
+    verify_r2(lambda method, path, params=None: cloudflare_request(token, method, path, params),
+              r2_path(account_id, bucket), {p.name: p.stat().st_size for p in (package, manifest_path)})
     prune_old_assets(
         lambda: r2_keys(cloudflare_request, token, account_id, bucket),
         lambda key: cloudflare_request(token, "DELETE", f"{r2_objects_path(account_id, bucket)}/{urllib.parse.quote(key, safe='/')}"),
         manifest["version"],
     )
-    verify_public(base, manifest, package)
+    verify_r2(lambda method, path, params=None: cloudflare_request(token, method, path, params),
+              r2_path(account_id, bucket), {p.name: p.stat().st_size for p in (package, manifest_path)})
 
     print("R2 Lee's Emby mirror complete")
 

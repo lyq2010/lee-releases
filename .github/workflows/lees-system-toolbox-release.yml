@@ -1,3 +1,4 @@
+# COS／R2 验收禁止对象正文回读；仅使用本地文件与 HEAD／对象列表元数据。
 name: Lee's System Toolbox Release
 
 on:
@@ -321,10 +322,13 @@ jobs:
           set -euo pipefail
           python3 -m pip install --user cos-python-sdk-v5
           cat > "$RUNNER_TEMP/cos_step.py" << 'PY'
-          import hashlib, json, os, sys, urllib.request
+          import hashlib, json, os, sys
           from pathlib import Path
           from urllib.parse import urlparse
           from qcloud_cos import CosConfig, CosS3Client
+
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools"))
+          from mirror_metadata import verify_cos
 
           base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
           if "://" not in base:
@@ -343,6 +347,10 @@ jobs:
           manifest_path = Path("assets/latest-lees-system-toolbox.json")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           installer = Path(urlparse(manifest["url"]).path).name
+          if (manifest.get("version") != os.environ["VERSION"]
+                  or manifest.get("platform") != "windows-x86_64" or not manifest.get("certificateThumbprint")
+                  or installer != f"lees-system-toolbox_{os.environ['VERSION']}_x64-setup.exe"):
+              sys.exit("Local system toolbox manifest identity mismatch")
           installer_path = Path("assets") / installer
           digest = hashlib.sha256(installer_path.read_bytes()).hexdigest().upper()
           if digest != manifest["sha256"].upper() or installer_path.stat().st_size != manifest["size"]:
@@ -351,6 +359,7 @@ jobs:
           manifest["url"] = f"{base}/{installer}"
           body = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
           client.put_object(Bucket=bucket, Body=body, Key=key("latest-lees-system-toolbox.json"), ContentType="application/json; charset=utf-8")
+          verify_cos(client, bucket, {key(installer): installer_path.stat().st_size, key("latest-lees-system-toolbox.json"): len(body)})
           current_key = key(installer)
           marker = ""
           while True:
@@ -367,13 +376,6 @@ jobs:
               marker = listed.get("NextMarker") or ""
               if not marker:
                   sys.exit("COS listing was truncated without a marker")
-          with urllib.request.urlopen(f"{base}/latest-lees-system-toolbox.json?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
-              published = json.loads(response.read().decode("utf-8"))
-          if published.get("version") != os.environ["VERSION"] or published.get("sha256", "").upper() != digest:
-              sys.exit("COS public manifest mismatch")
-          with urllib.request.urlopen(f"{base}/{installer}?verify={os.environ['GITHUB_RUN_ID']}", timeout=30) as response:
-              if int(response.headers.get("Content-Length", "0")) != installer_path.stat().st_size:
-                  sys.exit("COS public installer size mismatch")
           PY
           python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$RUNNER_TEMP/cos_step.py"
 
@@ -384,6 +386,12 @@ jobs:
       R2_BUCKET: packing-list-releases
       R2_PUBLIC_BASE_URL: https://plt-releases.leenbsl.workers.dev
     steps:
+      - name: Checkout mirror metadata helper
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          path: release-repo
       - name: Download public Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -403,12 +411,21 @@ jobs:
           account_id="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" https://api.cloudflare.com/client/v4/accounts | python3 -c 'import json,sys; d=json.load(sys.stdin); a=d.get("result") or []; assert d.get("success") and a; print(a[0]["id"])')"
           export CLOUDFLARE_ACCOUNT_ID="$account_id"
           python3 - <<'PY'
-          import json, os
+          import hashlib, json, os
           from pathlib import Path
           from urllib.parse import urlparse
           path = Path("assets/latest-lees-system-toolbox.json")
           manifest = json.loads(path.read_text(encoding="utf-8"))
           installer = Path(urlparse(manifest["url"]).path).name
+          if (manifest.get("version") != os.environ["VERSION"]
+                  or manifest.get("platform") != "windows-x86_64" or not manifest.get("certificateThumbprint")
+                  or installer != f"lees-system-toolbox_{os.environ['VERSION']}_x64-setup.exe"):
+              raise SystemExit("Local system toolbox manifest identity mismatch")
+          installer_path = Path("assets") / installer
+          with installer_path.open("rb") as handle:
+              digest = hashlib.file_digest(handle, "sha256").hexdigest().upper()
+          if digest != manifest["sha256"].upper() or installer_path.stat().st_size != manifest["size"]:
+              raise SystemExit("Local installer integrity mismatch")
           manifest["url"] = f"{os.environ['R2_PUBLIC_BASE_URL'].rstrip('/')}/{installer}"
           path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           PY
@@ -417,6 +434,7 @@ jobs:
           npm exec --yes --package wrangler@4 -- wrangler r2 object put "${R2_BUCKET}/latest-lees-system-toolbox.json" --file assets/latest-lees-system-toolbox.json --content-type "application/json; charset=utf-8" --remote
           python3 - "$account_id" <<'PY'
           import json, os, sys, urllib.parse, urllib.request
+          from pathlib import Path
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"]
           token = os.environ["CLOUDFLARE_API_TOKEN"]
@@ -433,6 +451,13 @@ jobs:
                   raise SystemExit(json.dumps(data, ensure_ascii=False))
               return data
           objects = f"/accounts/{urllib.parse.quote(account_id, safe='')}/r2/buckets/{urllib.parse.quote(bucket, safe='')}/objects"
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools"))
+          from mirror_metadata import verify_r2
+          verify_r2(request, objects, {
+              name: (Path("assets") / name).stat().st_size
+              for name in (current, "latest-lees-system-toolbox.json")
+          })
+
           cursor = ""
           while True:
               params = {"prefix": prefix, "per_page": "1000"}
@@ -450,6 +475,3 @@ jobs:
               if not cursor:
                   raise SystemExit("R2 listing was truncated without a cursor")
           PY
-          curl -fsS -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/latest-lees-system-toolbox.json?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json,os,sys; d=json.load(sys.stdin); assert d.get("version") == os.environ["VERSION"]; assert d.get("platform") == "windows-x86_64"; assert d.get("sha256") and d.get("certificateThumbprint")'
-          curl -fsSI -H "Cache-Control: no-cache" "${R2_PUBLIC_BASE_URL}/${installer}?verify=${GITHUB_RUN_ID}" >/dev/null
