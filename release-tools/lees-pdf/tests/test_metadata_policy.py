@@ -89,7 +89,7 @@ class MetadataPolicyTests(unittest.TestCase):
              patch.object(mirror, 'public_identity', side_effect=[None, expected]):
             mirror.put('cos', 'lees-pdf/releases/1.0.0/test.exe', file)
             options = sdk.CosS3Client.return_value.put_object.call_args.kwargs
-            self.assertEqual(options['ContentLength'], 123)
+            self.assertEqual(options['ContentLength'], '123')
             self.assertEqual(options['ContentMD5'], base64.b64encode(bytes.fromhex(expected[0])).decode('ascii'))
             sdk.CosS3Client.return_value.upload_file.assert_not_called()
 

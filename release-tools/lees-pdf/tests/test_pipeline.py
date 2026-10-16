@@ -37,7 +37,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("'lib/modules'", jdk)
         self.assertNotIn("'jmods/java.base.jmod'", jdk)
 
-    def test_promotion_skips_staging_and_uses_one_verified_release_operation(self):
+    def test_promotion_reuses_draft_without_rebuilding_and_uses_one_release_operation(self):
         self.assertIn('!inputs.promote', job('mirror'))
         promotion = job('promote')
         self.assertIn("needs.mirror.result == 'skipped'", promotion)
@@ -46,6 +46,14 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn('mirror.py cleanup', promotion)
         self.assertIn('--draft=false --latest=false', promotion)
         self.assertNotIn('readiness-r2.json lees-pdf-build-status', promotion)
+
+    def test_promotion_retry_repairs_mirrors_before_publishing(self):
+        promotion = job('promote')
+        self.assertIn('RETRY_MIRRORS: ${{ inputs.promote }}', promotion)
+        self.assertIn('if [[ "$RETRY_MIRRORS" == true ]]; then', promotion)
+        self.assertLess(promotion.index('MIRROR=cos python3'), promotion.index('MIRROR=r2 python3'))
+        self.assertLess(promotion.index('MIRROR=r2 python3'), promotion.index('mirror.py release public-output'))
+        self.assertNotIn('tauri build', promotion)
 
     def test_normal_release_and_promotion_retry_gate(self):
         condition = re.search(r"^    if: \$\{\{ (.*?) \}\}$", job('promote'), re.M)[1]

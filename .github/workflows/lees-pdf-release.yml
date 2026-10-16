@@ -12,7 +12,7 @@ on:
         default: all
         options: [all, windows-x86_64, darwin-aarch64]
       promote:
-        description: 仅重试已有 Draft 晋升；正常构建完成后会在同一轮直接发布
+        description: 复用已有 Draft，补齐镜像后重试晋升；正常构建会直接发布
         type: boolean
         default: false
 permissions:
@@ -249,6 +249,7 @@ jobs:
           echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
       - name: 核对双源 HEAD 元数据、晋升更新指针并清理后复核
         env:
+          RETRY_MIRRORS: ${{ inputs.promote }}
           GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
@@ -259,7 +260,12 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           R2_BUCKET: packing-list-releases
-        run: python3 release-tools/lees-pdf/mirror.py release public-output
+        run: |
+          if [[ "$RETRY_MIRRORS" == true ]]; then
+            MIRROR=cos python3 release-tools/lees-pdf/mirror.py stage public-output
+            MIRROR=r2 python3 release-tools/lees-pdf/mirror.py stage public-output
+          fi
+          python3 release-tools/lees-pdf/mirror.py release public-output
       - name: 清除 Draft 装配暂存
         env:
           GH_TOKEN: ${{ github.token }}

@@ -126,7 +126,7 @@ def put(source, key, file, mutable=False):
         # Use a single PUT with Content-MD5 so HEAD ETag can be compared without a download.
         with file.open('rb') as body:
             client.put_object(Bucket=env('TENCENT_COS_BUCKET'), Body=body, Key=object_key,
-                              ContentLength=expected[1], ContentMD5=base64.b64encode(bytes.fromhex(expected[0])).decode('ascii'),
+                              ContentLength=str(expected[1]), ContentMD5=base64.b64encode(bytes.fromhex(expected[0])).decode('ascii'),
                               CacheControl='no-cache' if mutable else 'public, max-age=31536000, immutable')
     else:
         command_env = os.environ.copy()
