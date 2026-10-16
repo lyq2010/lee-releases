@@ -29,8 +29,7 @@ Windows 与 macOS 原生工具箱、邮件客户端、PDF 编辑工具、Emby �
 | [Lee’s Toolbox Mac](docs/lees-toolbox-mac/README.md) | Apple Silicon、macOS 14+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+Toolbox+Mac%22&expanded=true) | `Lee.s.Toolbox.Mac_*_macOS_arm64.dmg` |
 | [Lee's Mail for Windows](docs/lees-mail/README.md#windows) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Windows%22&expanded=true) | `LeesMail_*_x64-setup.exe` |
 | [Lee's Mail for Mac](docs/lees-mail/README.md#mac) | Apple Silicon、macOS 15+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Mail+for+Mac%22&expanded=true) | `LeesMail-*-arm64.dmg` |
-| [Lee’s PDF for Windows](docs/lees-pdf/README.md#windows) | Windows 11 24H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) | `lees-pdf-*-windows-x86_64-setup.exe` |
-| [Lee’s PDF for Mac](docs/lees-pdf/README.md#mac) | Apple Silicon、macOS 26+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) | `lees-pdf-*-darwin-aarch64.dmg` |
+| [Lee’s PDF](docs/lees-pdf/README.md) | Windows 11 24H2+ x64；Apple Silicon、macOS 26+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%E2%80%99s+PDF%22&expanded=true) | `lees-pdf-*-windows-x86_64-setup.exe` / `lees-pdf-*-darwin-aarch64.dmg` |
 | [Lee's Emby](docs/lees-emby/README.md) | Windows 11 22H2+ x64 | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Emby%22&expanded=true) | `LeesEmby_*_x64-setup.exe` |
 | [Lee’s Music](docs/lees-music/README.md) | Android 8.0+ | [公开发行版](https://github.com/lyq2010/lee-releases/releases?q=%22Lee%27s+Music%22&expanded=true) | `lees-music-*.apk` |
 
@@ -46,9 +45,10 @@ Windows 与 macOS 原生工具箱、邮件客户端、PDF 编辑工具、Emby �
 
 - **Lee's 系统工具箱**：适用于 Windows 11 22H2+ x64，提供本机系统维护能力。
 - **Lee's Mail for Windows**：安装器请求管理员权限，将内置的 `CN=Lee` 证书导入本机“受信任人”，再安装 MSIX，无需手工导入证书。发行版同时提供原始 MSIX、公钥证书、SHA-256、版本清单和 GPL 对应源码归档，供离线校验与高级安装使用。
+- **Lee’s PDF**：适用于 Windows 11 24H2+ x64。安装器会核对固定发布者证书，并按需请求管理员授权以建立系统信任；安装后可直接打开或拖入 PDF。
 - **Lee's Emby**：安装到当前用户目录，无需管理员；安装器将内置的 `CN=Lee` 证书写入当前用户证书库。卸载默认保留用户数据，勾选清理后才全部删除。发行版同时提供 minisign 签名、公钥证书和版本清单。
 
-Mail 与 Emby 安装后可通过应用内提示更新后续版本。
+Mail、PDF 与 Emby 安装后可通过应用内提示更新后续版本。
 
 ### macOS
 
@@ -58,7 +58,7 @@ Mail 与 Emby 安装后可通过应用内提示更新后续版本。
 2. 打开 DMG，将应用拖入“应用程序”。
 3. 如果系统阻止首次打开，请前往“系统设置 → 隐私与安全性”确认允许。
 
-Lee's Mail for Mac 与 Lee’s Toolbox Mac 使用 ad-hoc 应用签名，不申请 Developer ID，也不执行 Apple 公证。首次安装需要按上面的步骤确认；后续应用内更新会校验 HTTPS 来源、文件大小、SHA-256 和对应签名。
+Lee's Mail for Mac、Lee’s Toolbox Mac 与 Lee’s PDF 使用 ad-hoc 应用签名，不申请 Developer ID，也不执行 Apple 公证。首次安装需要按上面的步骤确认；后续应用内更新会校验 HTTPS 来源、文件大小、SHA-256 和对应签名。
 
 ### Android · Lee’s Music
 
