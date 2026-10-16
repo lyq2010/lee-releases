@@ -1,6 +1,10 @@
 """Guard workflow configuration without adding runtime or test dependencies."""
 from pathlib import Path
 import re
+import json
+import os
+import textwrap
+from unittest.mock import patch
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -54,6 +58,21 @@ class PipelineTests(unittest.TestCase):
         self.assertLess(promotion.index('MIRROR=cos python3'), promotion.index('MIRROR=r2 python3'))
         self.assertLess(promotion.index('MIRROR=r2 python3'), promotion.index('mirror.py release public-output'))
         self.assertNotIn('tauri build', promotion)
+
+    def test_draft_cleanup_is_repeatable_when_some_temporary_assets_are_absent(self):
+        promotion=job('promote')
+        cleanup=promotion.split('name: 清除 Draft 装配暂存',1)[1].split('name: 公布发行',1)[0]
+        code=re.search(r"python3 - <<'PY'\n(.*?)^          PY\n",cleanup,re.M|re.S)
+        self.assertIsNotNone(code)
+        body=textwrap.dedent(code[1])
+        for temporary in (['readiness-r2.json'],[]):
+            assets=[{'name':name} for name in temporary+['release-manifest.json','SHA256SUMS','lees-pdf-0.1.4-windows-x86_64-setup.exe']]
+            with patch.dict(os.environ,{'PUBLIC_TAG':'lees-pdf-v0.1.4'}), \
+                 patch('subprocess.check_output',return_value=json.dumps({'assets':assets})), \
+                 patch('subprocess.run') as remove:
+                exec(body,{})
+                self.assertEqual([call.args[0][4] for call in remove.call_args_list],temporary)
+                self.assertTrue(all(call.kwargs['check'] for call in remove.call_args_list))
 
     def test_normal_release_and_promotion_retry_gate(self):
         condition = re.search(r"^    if: \$\{\{ (.*?) \}\}$", job('promote'), re.M)[1]

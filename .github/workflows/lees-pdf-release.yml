@@ -271,12 +271,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: |
-          for file in darwin-aarch64.json windows-x86_64.json darwin-aarch64-public-config.json windows-x86_64-public-config.json readiness-cos.json readiness-r2.json; do
-            gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
-          done
-          gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json assets --jq '.assets[].name | select((startswith("lees-pdf-diagnostics-") and endswith(".json")) or . == "lees-pdf-build-status-windows-x86_64.json")' | while IFS= read -r file; do
-            gh release delete-asset "$PUBLIC_TAG" "$file" --repo lyq2010/lee-releases --yes
-          done
+          python3 - <<'PY'
+          import json,os,subprocess
+          tag=os.environ['PUBLIC_TAG']
+          release=json.loads(subprocess.check_output(['gh','release','view',tag,'--repo','lyq2010/lee-releases','--json','assets'],text=True))
+          temporary={'darwin-aarch64.json','windows-x86_64.json','darwin-aarch64-public-config.json','windows-x86_64-public-config.json','readiness-cos.json','readiness-r2.json','lees-pdf-build-status-windows-x86_64.json'}
+          for asset in release['assets']:
+              name=asset['name']
+              if name in temporary or (name.startswith('lees-pdf-diagnostics-') and name.endswith('.json')):
+                  subprocess.run(['gh','release','delete-asset',tag,name,'--repo','lyq2010/lee-releases','--yes'],check=True)
+          PY
       - name: 公布发行
         env:
           GH_TOKEN: ${{ github.token }}
