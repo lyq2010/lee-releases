@@ -1,12 +1,13 @@
 """Stage immutable releases, then verify both mirrors before promotion and scoped cleanup."""
 from concurrent.futures import ThreadPoolExecutor
+import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,8 +17,10 @@ SCRIPT = Path(__file__).parent
 SOURCES = ('cos', 'r2')
 
 
-def verified_manifest(file):
-    return json.loads(subprocess.check_output(['node', str(SCRIPT / 'verify.mjs'), str(file)], encoding='utf-8'))
+def verified_manifest(file=None, *, raw=None):
+    return json.loads(subprocess.check_output(
+        ['node', str(SCRIPT / 'verify.mjs'), '-' if raw is not None else str(file)],
+        input=raw, encoding='utf-8'))
 
 
 def env(name):
@@ -42,40 +45,75 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError('Redirect refused')
 
 
-def public_digest(url):
-    request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 LeesPDF-Release/1', 'Cache-Control': 'no-cache'})
-    digest, size = hashlib.sha256(), 0
+def public_identity(url):
+    # HEAD only: never read object bodies, even partially or into memory.
+    request = urllib.request.Request(url, method='HEAD', headers={
+        'User-Agent': 'Mozilla/5.0 LeesPDF-Release/1', 'Cache-Control': 'no-cache',
+        'Accept-Encoding': 'identity'})
     try:
         with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
-            while block := response.read(1024 * 1024):
-                size += len(block)
-                if size > 768 * 1024 * 1024:
-                    raise RuntimeError('Mirror object exceeds budget')
-                digest.update(block)
+            etag = response.headers.get('ETag', '').strip('"').lower()
+            length = response.headers.get('Content-Length', '')
+            if not re.fullmatch(r'[0-9a-f]{32}', etag) or not re.fullmatch(r'[0-9]+', length):
+                raise RuntimeError('Mirror HEAD metadata is insufficient; body download is forbidden')
+            size = int(length)
+            if size > 768 * 1024 * 1024:
+                raise RuntimeError('Mirror object exceeds budget')
+            return etag, size
     except urllib.error.HTTPError as error:
+        error.close()
         if error.code == 404:
             return None
         raise
+
+
+def identity(data):
+    # Single-part ETag/MD5 is transport metadata, not a remote SHA-256 verification.
+    return hashlib.md5(data, usedforsecurity=False).hexdigest(), len(data)
+
+
+def file_identity(file):
+    digest, size = hashlib.md5(usedforsecurity=False), 0
+    with file.open('rb') as stream:
+        while block := stream.read(1024 * 1024):
+            digest.update(block)
+            size += len(block)
     return digest.hexdigest(), size
 
 
-def readback_digest(url, expected):
-    # A 200 response may end early without urllib raising IncompleteRead.
-    # Only retry short bodies; every accepted attempt must match both full size and SHA-256.
-    for attempt in range(3):
-        actual = public_digest(url)
-        if actual == expected or actual is None or actual[1] >= expected[1]:
-            return actual
-        if attempt < 2:
-            print(f'Short public response: {actual[1]}/{expected[1]} bytes; retry {attempt + 1}/2', flush=True)
-            time.sleep(attempt + 1)
-    return actual
+def manifest_metadata(outer, payload, source):
+    metadata = dict(outer)
+    metadata['platforms'] = {
+        target: {'url': urllib.parse.urljoin(base(source), value['updaterArtifact']['path']),
+                 'signature': value['updaterArtifact']['signature']}
+        for target, value in payload['platforms'].items()}
+    return (json.dumps(metadata, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+
+
+def github_previous_manifest():
+    # The signed prior release comes from GitHub, never from a bucket object GET.
+    rows = json.loads(subprocess.check_output([
+        'gh', 'release', 'list', '--repo', 'lyq2010/lee-releases', '--exclude-drafts',
+        '--exclude-pre-releases', '--limit', '100', '--json', 'tagName'], encoding='utf-8'))
+    tags = [row['tagName'] for row in rows if re.fullmatch(r'lees-pdf-v[0-9]+\.[0-9]+\.[0-9]+', row['tagName'])]
+    if not tags:
+        return None
+    tag = max(tags, key=lambda value: tuple(map(int, value.removeprefix('lees-pdf-v').split('.'))))
+    raw = subprocess.check_output([
+        'gh', 'release', 'download', tag, '--repo', 'lyq2010/lee-releases',
+        '--pattern', 'release-manifest.json', '--output', '-'], encoding='utf-8')
+    if len(raw.encode('utf-8')) > 65536:
+        raise RuntimeError('GitHub release manifest exceeds budget')
+    verified = verified_manifest(raw=raw)
+    if verified['payload']['releaseId'] != tag or tag != 'lees-pdf-v' + verified['payload']['version']:
+        raise RuntimeError('Prior GitHub release identity mismatch')
+    return json.loads(raw), verified
 
 
 def put(source, key, file, mutable=False):
-    expected = (hashlib.sha256(file.read_bytes()).hexdigest(), file.stat().st_size)
+    expected = file_identity(file)
     url = urllib.parse.urljoin(base(source), key)
-    existing = public_digest(url) if mutable else readback_digest(url, expected)
+    existing = public_identity(url)
     if existing == expected:
         return
     if existing is not None and not mutable:
@@ -85,7 +123,11 @@ def put(source, key, file, mutable=False):
         client = CosS3Client(CosConfig(Region=env('TENCENT_COS_REGION'), SecretId=env('TENCENT_COS_SECRET_ID'), SecretKey=env('TENCENT_COS_SECRET_KEY'), Scheme='https'))
         path_prefix = urllib.parse.urlsplit(base(source)).path.strip('/')
         object_key = f'{path_prefix}/{key}' if path_prefix else key
-        client.upload_file(Bucket=env('TENCENT_COS_BUCKET'), LocalFilePath=str(file), Key=object_key, EnableMD5=True, CacheControl='no-cache' if mutable else 'public, max-age=31536000, immutable')
+        # Use a single PUT with Content-MD5 so HEAD ETag can be compared without a download.
+        with file.open('rb') as body:
+            client.put_object(Bucket=env('TENCENT_COS_BUCKET'), Body=body, Key=object_key,
+                              ContentLength=expected[1], ContentMD5=base64.b64encode(bytes.fromhex(expected[0])).decode('ascii'),
+                              CacheControl='no-cache' if mutable else 'public, max-age=31536000, immutable')
     else:
         command_env = os.environ.copy()
         command_env['CLOUDFLARE_API_TOKEN'] = env('CF_API_TOKEN')
@@ -99,8 +141,8 @@ def put(source, key, file, mutable=False):
             account = accounts['result'][0]['id']
         command_env['CLOUDFLARE_ACCOUNT_ID'] = account
         subprocess.run(['node', env('LEESPDF_WRANGLER_CLI'), 'r2', 'object', 'put', f'{env("R2_BUCKET")}/{key}', '--file', str(file), '--remote', '--cache-control', 'no-cache' if mutable else 'public, max-age=31536000, immutable'], env=command_env, check=True)
-    if readback_digest(url, expected) != expected:
-        raise RuntimeError('Public mirror readback does not match')
+    if public_identity(url) != expected:
+        raise RuntimeError('Public mirror HEAD metadata does not match')
 
 
 class Release:
@@ -114,8 +156,7 @@ class Release:
         self.prefix = f'lees-pdf/releases/{self.version}/'
         self.outer = json.loads((root / 'release-manifest.json').read_text(encoding='utf-8'))
         self.files = self.artifacts()
-        self.expected = {key: (hashlib.sha256(file.read_bytes()).hexdigest(), file.stat().st_size)
-                         for key, file in self.files.items()}
+        self.expected = {key: file_identity(file) for key, file in self.files.items()}
 
     def artifacts(self):
         result = {}
@@ -141,17 +182,13 @@ class Release:
         return result
 
     def metadata(self, source):
-        metadata = dict(self.outer)
-        metadata['platforms'] = {
-            target: {'url': urllib.parse.urljoin(base(source), value['updaterArtifact']['path']),
-                     'signature': value['updaterArtifact']['signature']}
-            for target, value in self.payload['platforms'].items()}
-        return (json.dumps(metadata, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+        return manifest_metadata(self.outer, self.payload, source)
 
     def readiness(self, source):
         (self.root / f'readiness-{source}.json').write_text(json.dumps({
             'source': source, 'verified': True, 'version': self.version,
-            'payloadSha256': self.verified['payloadSha256'], 'runId': env('GITHUB_RUN_ID')}), encoding='utf-8')
+            'payloadSha256': self.verified['payloadSha256'], 'runId': env('GITHUB_RUN_ID'),
+            'verification': 'head-metadata-only'}), encoding='utf-8')
 
     def stage(self, source):
         if source not in SOURCES:
@@ -165,14 +202,14 @@ class Release:
 
     def verify_source(self, source, pointers=False, assets=True):
         expected = self.metadata(source)
-        digest = (hashlib.sha256(expected).hexdigest(), len(expected))
+        digest = identity(expected)
         for key in ([self.prefix + 'release-manifest.json', 'latest-lees-pdf.json'] if pointers
                     else [self.prefix + 'release-manifest.json']):
-            if readback_digest(urllib.parse.urljoin(base(source), key), digest) != digest:
+            if public_identity(urllib.parse.urljoin(base(source), key)) != digest:
                 raise RuntimeError('Mirror manifest does not match signed release')
         if assets:
             for key, expected in self.expected.items():
-                actual = readback_digest(urllib.parse.urljoin(base(source), key), expected)
+                actual = public_identity(urllib.parse.urljoin(base(source), key))
                 if actual != expected:
                     raise RuntimeError(f'Current asset missing or changed: {source} {key}; expected={expected}, actual={actual}')
 
@@ -181,24 +218,20 @@ class Release:
             list(pool.map(lambda source: self.verify_source(source, pointers, assets), SOURCES))
 
     def check_previous(self):
+        previous = github_previous_manifest()
+        if previous:
+            outer, verified = previous
+            old_version = tuple(map(int, verified['payload']['version'].split('.')))
+            new_version = tuple(map(int, self.version.split('.')))
+            if old_version > new_version or (old_version == new_version and verified['payloadSha256'] != self.verified['payloadSha256']):
+                raise RuntimeError('Refusing a downgrade or conflicting release version')
         for source in SOURCES:
-            request = urllib.request.Request(urllib.parse.urljoin(base(source), 'latest-lees-pdf.json'),
-                                            headers={'User-Agent': 'Mozilla/5.0 LeesPDF-Release/1', 'Cache-Control': 'no-cache'})
-            try:
-                with urllib.request.build_opener(NoRedirect).open(request, timeout=30) as response:
-                    previous = response.read(65537)
-                if len(previous) > 65536:
-                    raise RuntimeError('Existing latest manifest exceeds budget')
-                prior_file = self.root / f'previous-latest-{source}.json'
-                prior_file.write_bytes(previous)
-                prior = verified_manifest(prior_file)
-                old_version = tuple(map(int, prior['payload']['version'].split('.')))
-                new_version = tuple(map(int, self.version.split('.')))
-                if old_version > new_version or (old_version == new_version and prior['payloadSha256'] != self.verified['payloadSha256']):
-                    raise RuntimeError('Refusing a downgrade or conflicting release version')
-            except urllib.error.HTTPError as error:
-                if error.code != 404:
-                    raise
+            actual = public_identity(urllib.parse.urljoin(base(source), 'latest-lees-pdf.json'))
+            if actual is None or actual == identity(self.metadata(source)):
+                continue
+            if previous and actual == identity(manifest_metadata(outer, verified['payload'], source)):
+                continue
+            raise RuntimeError('Existing pointer does not match a signed GitHub release; download refused')
 
     def cleanup(self, assets_verified=False):
         # publish() just verified every immutable asset in this process. Check both pointers again before pruning.

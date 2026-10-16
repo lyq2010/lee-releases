@@ -180,6 +180,7 @@ jobs:
           LEESPDF_RELEASE_PRIVATE_KEY: ${{ secrets.LEESPDF_RELEASE_PRIVATE_KEY }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
         run: node release-tools/lees-pdf/manifest.mjs public-output
+  # COS/R2 核对仅允许 HEAD/元数据，不得 GET、Range 或流式下载对象正文。
   mirror:
     if: ${{ always() && !inputs.promote && needs.validate.result == 'success' && needs.draft.result == 'success' }}
     needs: [validate, draft]
@@ -207,7 +208,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
           echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
-      - name: 上传不可变资产并公网回读
+      - name: 上传不可变资产并核对 HEAD 元数据
         env:
           MIRROR: ${{ matrix.source }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
@@ -246,8 +247,9 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
           echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
-      - name: 核对双源、晋升更新指针并清理后复核
+      - name: 核对双源 HEAD 元数据、晋升更新指针并清理后复核
         env:
+          GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
           TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}

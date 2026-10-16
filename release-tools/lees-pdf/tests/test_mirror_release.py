@@ -1,6 +1,5 @@
 """Exercise production release ordering with mock stores, after the signature boundary."""
 import hashlib
-import io
 import importlib.util
 import json
 import os
@@ -19,9 +18,6 @@ spec.loader.exec_module(mirror)
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
-        sleeper = patch.object(mirror.time, 'sleep')
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
         parent = Path(os.environ.get('LEES_TEST_OUTPUT', Path(tempfile.gettempdir()) / 'lees-pdf-release-tests'))
         parent.mkdir(parents=True, exist_ok=True)
         self.root = Path(tempfile.mkdtemp(dir=parent))
@@ -54,14 +50,14 @@ class ReleaseTests(unittest.TestCase):
     def digest(self, url):
         self.reads.append(url)
         data = self.store.get(url)
-        return None if data is None else (hashlib.sha256(data).hexdigest(), len(data))
+        return None if data is None else (hashlib.md5(data, usedforsecurity=False).hexdigest(), len(data))
 
     def put(self, source, key, file, mutable=False):
         self.writes.append((source, key))
         self.store[mirror.base(source) + key] = file.read_bytes()
 
     def run_release(self, put=None, prune=None):
-        with patch.object(mirror, 'public_digest', side_effect=self.digest), \
+        with patch.object(mirror, 'public_identity', side_effect=self.digest), \
              patch.object(mirror, 'put', side_effect=put or self.put), \
              patch.object(mirror, 'prune', side_effect=prune or (lambda *args: self.deleted.append(args))), \
              patch.object(self.release, 'check_previous'):
@@ -115,29 +111,40 @@ class ReleaseTests(unittest.TestCase):
 
     def test_prior_downgrade_and_same_version_conflict_are_rejected(self):
         for version, digest in [('1.0.2', 'a' * 64), ('1.0.1', 'b' * 64)]:
-            with self.subTest(version=version), \
-                 patch.object(mirror.urllib.request, 'build_opener') as opener:
-                opener.return_value.open.side_effect = lambda *args, **kwargs: io.BytesIO(b'prior signed manifest')
-                self.verify_mock.return_value = {'payload': {'version': version}, 'payloadSha256': digest}
+            with self.subTest(version=version), patch.object(mirror, 'github_previous_manifest', return_value=(
+                    {}, {'payload': {'version': version}, 'payloadSha256': digest})):
                 with self.assertRaisesRegex(RuntimeError, 'downgrade or conflicting'):
                     self.release.check_previous()
 
     def test_invalid_prior_signature_blocks_pointer_writes(self):
-        with patch.object(mirror.urllib.request, 'build_opener') as opener, \
-             patch.object(mirror, 'public_digest', side_effect=self.digest), \
+        with patch.object(mirror, 'github_previous_manifest', side_effect=RuntimeError('signature invalid')), \
+             patch.object(mirror, 'public_identity', side_effect=self.digest), \
              patch.object(mirror, 'put', side_effect=self.put), patch.object(mirror, 'prune') as prune:
-            opener.return_value.open.side_effect = lambda *args, **kwargs: io.BytesIO(b'bad signed manifest')
-            self.verify_mock.side_effect = RuntimeError('signature invalid')
             with self.assertRaisesRegex(RuntimeError, 'signature invalid'):
                 self.release.publish()
             self.assertFalse(self.writes)
             prune.assert_not_called()
 
+    def test_prior_pointer_is_matched_with_github_signature_and_head_only(self):
+        prior_payload = dict(self.payload, version='1.0.0')
+        prior_outer = {'version': '1.0.0', 'release': {'testBoundary': True}}
+        for source in ('cos', 'r2'):
+            self.store[mirror.base(source) + 'latest-lees-pdf.json'] = mirror.manifest_metadata(prior_outer, prior_payload, source)
+        with patch.object(mirror, 'github_previous_manifest', return_value=(prior_outer, {
+                'payload': prior_payload, 'payloadSha256': 'b' * 64})), \
+             patch.object(mirror, 'public_identity', side_effect=self.digest), \
+             patch.object(mirror.urllib.request, 'build_opener') as network:
+            self.release.check_previous()
+            network.assert_not_called()
+            self.store[mirror.base('r2') + 'latest-lees-pdf.json'] = b'unknown pointer'
+            with self.assertRaisesRegex(RuntimeError, 'does not match'):
+                self.release.check_previous()
+
     def test_standalone_cleanup_verifies_assets_before_pruning(self):
         for source in ('cos', 'r2'):
             self.store[mirror.base(source) + 'latest-lees-pdf.json'] = self.release.metadata(source)
         self.store.pop(mirror.base('r2') + self.asset['path'])
-        with patch.object(mirror, 'public_digest', side_effect=self.digest), patch.object(mirror, 'prune') as prune:
+        with patch.object(mirror, 'public_identity', side_effect=self.digest), patch.object(mirror, 'prune') as prune:
             with self.assertRaisesRegex(RuntimeError, 'asset'):
                 self.release.cleanup()
             prune.assert_not_called()
@@ -147,51 +154,30 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Unsafe asset'):
             mirror.Release(self.root)
 
-    def test_r2_uses_preinstalled_cli_and_checks_public_readback(self):
+    def test_r2_uses_preinstalled_cli_and_checks_head_metadata(self):
         file = self.root / Path(self.asset['path']).name
-        expected = (self.asset['sha256'], self.asset['size'])
+        expected = mirror.file_identity(file)
         with patch.dict(os.environ, {'LEESPDF_WRANGLER_CLI': '/tools/wrangler.js', 'CF_ACCOUNT_ID': 'test-account',
                                      'CF_API_TOKEN': 'synthetic-token', 'R2_BUCKET': 'test-bucket'}), \
-             patch.object(mirror, 'public_digest', side_effect=[None, expected]), \
+             patch.object(mirror, 'public_identity', side_effect=[None, expected]), \
              patch.object(mirror.subprocess, 'run') as command:
             mirror.put('r2', self.asset['path'], file)
             self.assertEqual(command.call_args.args[0][:5], ['node', '/tools/wrangler.js', 'r2', 'object', 'put'])
             self.assertTrue(command.call_args.kwargs['check'])
 
     def test_immutable_conflict_never_uploads(self):
-        with patch.object(mirror, 'public_digest', return_value=('changed', 1)), \
+        with patch.object(mirror, 'public_identity', return_value=('changed', 1)), \
              patch.object(mirror.subprocess, 'run') as command:
             with self.assertRaisesRegex(RuntimeError, 'Immutable'):
                 mirror.put('r2', self.asset['path'], self.root / Path(self.asset['path']).name)
             command.assert_not_called()
 
-    def test_short_public_read_retries_until_full_identity_matches(self):
-        expected = ('a' * 64, 100)
-        with patch.object(mirror, 'public_digest', side_effect=[('partial', 13), expected]) as read, \
-             patch.object(mirror.time, 'sleep'):
-            self.assertEqual(mirror.readback_digest('https://r2.example/asset', expected), expected)
-            self.assertEqual(read.call_count, 2)
-
-    def test_short_public_read_has_a_fixed_attempt_limit(self):
-        expected = ('a' * 64, 100)
-        with patch.object(mirror, 'public_digest', return_value=('partial', 13)) as read, \
-             patch.object(mirror.time, 'sleep'):
-            self.assertNotEqual(mirror.readback_digest('https://r2.example/asset', expected), expected)
-            self.assertEqual(read.call_count, 3)
-
-    def test_full_length_corruption_and_missing_objects_are_not_retried(self):
-        expected = ('a' * 64, 100)
-        for actual in [('wrong', 100), None]:
-            with self.subTest(actual=actual), patch.object(mirror, 'public_digest', return_value=actual) as read:
-                self.assertNotEqual(mirror.readback_digest('https://r2.example/asset', expected), expected)
-                self.assertEqual(read.call_count, 1)
-
-    def test_wrong_public_readback_fails_upload(self):
+    def test_wrong_head_metadata_fails_upload(self):
         with patch.dict(os.environ, {'LEESPDF_WRANGLER_CLI': '/tools/wrangler.js', 'CF_ACCOUNT_ID': 'test-account',
                                      'CF_API_TOKEN': 'synthetic-token', 'R2_BUCKET': 'test-bucket'}), \
-             patch.object(mirror, 'public_digest', side_effect=[None] + [('wrong', 1)] * 3), \
+             patch.object(mirror, 'public_identity', side_effect=[None, ('wrong', 1)]), \
              patch.object(mirror.subprocess, 'run'):
-            with self.assertRaisesRegex(RuntimeError, 'readback'):
+            with self.assertRaisesRegex(RuntimeError, 'HEAD metadata'):
                 mirror.put('r2', self.asset['path'], self.root / Path(self.asset['path']).name)
 
 

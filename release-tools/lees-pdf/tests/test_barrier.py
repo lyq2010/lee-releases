@@ -12,7 +12,7 @@ class BarrierTests(unittest.TestCase):
     def run_barrier(self, **r2_changes):
         with tempfile.TemporaryDirectory(prefix='lees-pdf-readiness-') as directory:
             for source in ('cos', 'r2'):
-                row = {'source': source, 'verified': True, 'version': '0.1.0', 'payloadSha256': 'a' * 64, 'runId': '42'}
+                row = {'source': source, 'verified': True, 'verification': 'head-metadata-only', 'version': '0.1.0', 'payloadSha256': 'a' * 64, 'runId': '42'}
                 if source == 'r2':
                     row.update(r2_changes)
                 (Path(directory) / f'readiness-{source}.json').write_text(json.dumps(row), encoding='utf-8')
@@ -27,6 +27,10 @@ class BarrierTests(unittest.TestCase):
     def test_mismatched_content_and_version_are_rejected(self):
         self.assertNotEqual(self.run_barrier(payloadSha256='b' * 64), 0)
         self.assertNotEqual(self.run_barrier(version='0.1.1'), 0)
+
+    def test_legacy_or_mixed_verification_evidence_is_rejected(self):
+        self.assertNotEqual(self.run_barrier(verification='download-sha256'), 0)
+        self.assertNotEqual(self.run_barrier(verification=None), 0)
 
     def test_unverified_mirror_is_rejected(self):
         self.assertNotEqual(self.run_barrier(verified=False), 0)

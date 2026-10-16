@@ -63,6 +63,12 @@ class PipelineTests(unittest.TestCase):
                     with self.subTest(promote=promote, validation=validation, mirror=mirror):
                         self.assertEqual(actual, expected)
 
+    def test_bucket_verification_is_explicitly_head_only(self):
+        self.assertIn('COS/R2 核对仅允许 HEAD/元数据', WORKFLOW)
+        self.assertIn('GH_TOKEN: ${{ github.token }}', job('promote'))
+        self.assertIn('HEAD 元数据', job('mirror'))
+        self.assertIn('HEAD 元数据', job('promote'))
+
     def test_cache_contains_only_public_registry_archives(self):
         build = job('build')
         self.assertEqual(build.count('uses: actions/cache@'), 1)
