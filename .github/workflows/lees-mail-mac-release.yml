@@ -3,6 +3,7 @@ name: Lee's Mail Mac Release
 # 私有源码仓 lyq2010/lees-mail-mac 打 tag 后在这里发版。
 # 更新通道沿用 native-release.yml 的双通道做法：COS 为主、R2 为备，
 # 两条通道各放一份 latest-lees-mail-electron.json，客户端按顺序失败切换。
+# COS／R2 核对仅用本地文件及远端 HEAD／列表元数据，禁止下载对象正文。
 on:
   workflow_dispatch:
     inputs:
@@ -384,7 +385,7 @@ jobs:
     if: ${{ needs.build.result == 'success' && inputs.publish }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout COS retry helper
+      - name: Checkout mirror helpers
         uses: actions/checkout@v7
         with:
           ref: main
@@ -417,6 +418,9 @@ jobs:
           from urllib.parse import urlparse
           from qcloud_cos import CosConfig, CosS3Client
 
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools/lees-mail-mac"))
+          from verify_mirror import load_release, verify_sizes
+
           base = os.environ["COS_PUBLIC_BASE_URL"].strip().rstrip("/")
           if "://" not in base:
               base = f"https://{base}"
@@ -435,6 +439,7 @@ jobs:
           bucket = os.environ["TENCENT_COS_BUCKET"].strip()
           version = os.environ["VERSION"]
           manifest = os.environ.get("MANIFEST_NAME", "latest-lees-mail-electron.json")
+          expected = load_release("assets", version, base, manifest)
 
           for name, ctype in (
               (f"LeesMail-{version}-arm64.dmg", "application/x-apple-diskimage"),
@@ -452,6 +457,12 @@ jobs:
               Key=key(manifest),
               ContentType="application/json; charset=utf-8",
           )
+
+          # 只读 HEAD 元数据，不下载清单、签名或 DMG。
+          verify_sizes(expected, {
+              name: client.head_object(Bucket=bucket, Key=key(name))["Content-Length"]
+              for name in expected
+          })
 
           # 清理旧版本产物。
           #
@@ -484,25 +495,17 @@ jobs:
           PY
           python3 "$GITHUB_WORKSPACE/release-repo/release-tools/cos_retry.py" python3 "$RUNNER_TEMP/cos_step.py"
 
-      - name: Verify COS serves the new version
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-        run: |
-          set -euo pipefail
-          cos_base="${COS_PUBLIC_BASE_URL%/}"
-          [[ "$cos_base" == https://* ]] || cos_base="https://${cos_base#*://}"
-          got="$(curl -fsS -H 'Cache-Control: no-cache' \
-            "${cos_base}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" |
-            python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
-          [ "$got" = "$VERSION" ] || { echo "$cos_base 返回 $got，期望 $VERSION" >&2; exit 1; }
-          echo "COS 主通道就绪：$got"
-
   r2-lees-mail-mac-mirror:
     needs: build
     if: ${{ needs.build.result == 'success' && inputs.publish }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout mirror helpers
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+          path: release-repo
       - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -528,13 +531,14 @@ jobs:
           export CLOUDFLARE_ACCOUNT_ID="$account_id"
           dmg="LeesMail-${VERSION}-arm64.dmg"
 
-          # R2 上的清单必须指向 R2 自己的 DMG 与签名。客户端会依次尝试两条清单地址，
-          # 但下载只认它拿到的那份清单里的 downloadURL，没有跨通道回退；若两份清单都写
-          # COS，COS 挂掉时客户端能从 R2 发现新版本，下载仍会回到 COS 而失败。
+          # R2 上的清单必须指向 R2 自己的 DMG 与签名，上传前只用本地文件校验。
           # sha256 与 downloadSize 描述的是同一个文件，保持不变。
           python3 - <<'PY'
-          import json, os
+          import json, os, sys
           from pathlib import Path
+
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools/lees-mail-mac"))
+          from verify_mirror import load_release
 
           base = os.environ["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
           dmg = f"LeesMail-{os.environ['VERSION']}-arm64.dmg"
@@ -543,6 +547,7 @@ jobs:
           manifest["downloadURL"] = f"{base}/{dmg}"
           manifest["minisignSignatureURL"] = f"{base}/{dmg}.minisig"
           path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          load_release("assets", os.environ["VERSION"], base, os.environ["MANIFEST_NAME"])
           print(json.dumps(manifest, ensure_ascii=False, indent=2))
           PY
 
@@ -558,6 +563,10 @@ jobs:
           # LeesMail-，且只删 .dmg / .dmg.minisig，不碰清单和别的项目的对象。
           python3 - "$account_id" <<'PY'
           import json, os, re, sys, urllib.parse, urllib.request
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path(os.environ["GITHUB_WORKSPACE"]) / "release-repo/release-tools/lees-mail-mac"))
+          from verify_mirror import verify_sizes
 
           account_id = sys.argv[1]
           bucket = os.environ["R2_BUCKET"].strip()
@@ -567,6 +576,9 @@ jobs:
           # / -setup.exe）和 Lee's Toolbox，只差一个字符的前缀不足以安全区分。
           pattern = re.compile(r"^LeesMail-\d+\.\d+\.\d+-arm64\.dmg(\.minisig)?$")
           keep = {f"LeesMail-{version}-arm64.dmg", f"LeesMail-{version}-arm64.dmg.minisig"}
+          manifest = os.environ["MANIFEST_NAME"]
+          expected = {name: (Path("assets") / name).stat().st_size for name in (*keep, manifest)}
+          actual = {}
 
           def api(method, path, params=None):
               url = f"https://api.cloudflare.com/client/v4{path}"
@@ -590,6 +602,8 @@ jobs:
               data = api("GET", base, params)
               for obj in data.get("result") or []:
                   name = obj.get("key", "")
+                  if name in expected:
+                      actual[name] = obj["size"]
                   if pattern.match(name) and name not in keep:
                       stale.append(name)
               info = data.get("result_info") or {}
@@ -597,35 +611,14 @@ jobs:
               if not cursor:
                   break
 
+          # 管理 API 只列出清单元数据，不请求公网 Worker，避免代理回源读取正文。
+          for obj in api("GET", base, {"prefix": manifest, "per_page": "1000"}).get("result") or []:
+              if obj.get("key") == manifest:
+                  actual[manifest] = obj["size"]
+          verify_sizes(expected, actual)
+
           for name in stale:
               api("DELETE", f"{base}/{urllib.parse.quote(name, safe='')}")
               print(f"已删除旧产物: {name}")
           PY
           echo "R2 备用通道已更新"
-
-      - name: Verify R2 serves the new version
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          set -euo pipefail
-          curl -fsS -H 'Cache-Control: no-cache' \
-            "${R2_PUBLIC_BASE_URL}/${MANIFEST_NAME}?verify=${GITHUB_RUN_ID}" \
-            -o r2-manifest.json
-          # 备用通道要能独立完成一次升级：版本对得上，且清单里的下载地址落在 R2 自己身上。
-          python3 - "$VERSION" "$R2_PUBLIC_BASE_URL" r2-manifest.json <<'PY'
-          import json, sys
-
-          version, base, path = sys.argv[1], sys.argv[2].strip().rstrip("/"), sys.argv[3]
-          with open(path, encoding="utf-8") as handle:
-              manifest = json.load(handle)
-          if manifest["version"] != version:
-              sys.exit(f"R2 返回 {manifest['version']}，期望 {version}")
-          for field in ("downloadURL", "minisignSignatureURL"):
-              if not manifest[field].startswith(f"{base}/"):
-                  sys.exit(f"R2 清单的 {field} 仍指向 {manifest[field]}，备用通道无法独立下载。")
-          print(manifest["downloadURL"])
-          PY
-          # 顺带确认签名文件真的能从 R2 取到（几百字节，不必拉整个 DMG）。
-          sig_url="$(python3 -c 'import json;print(json.load(open("r2-manifest.json"))["minisignSignatureURL"])')"
-          curl -fsS -o /dev/null "$sig_url"
-          echo "R2 备用通道就绪：$VERSION"
