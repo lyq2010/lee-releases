@@ -265,7 +265,38 @@ jobs:
             MIRROR=cos python3 release-tools/lees-pdf/mirror.py stage public-output
             MIRROR=r2 python3 release-tools/lees-pdf/mirror.py stage public-output
           fi
-          python3 release-tools/lees-pdf/mirror.py release public-output
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'release-tools/lees-pdf')
+          from mirror import Release, public_identity, identity, base, github_previous_manifest
+
+          release = Release(Path('public-output'))
+
+          def check_authorized_previous():
+              # 官人确认手动删除旧 GitHub 发行；本次授权只覆盖这份已签 0.1.6 清单。
+              if (release.version != '0.1.6'
+                  or release.payload['sourceRevision'] != '6e8a0a82b832759b19d123d420217040bcc7390e'
+                  or release.verified['payloadSha256'] != 'b9536d32a4f68a09e1b458299a421f1349f579f256a98df1261862336b612105'
+                  or github_previous_manifest() is not None):
+                  raise RuntimeError('One-time recovery identity or deleted-history condition differs')
+              expected = {
+                  'cos': ('11aa65f18b283d121635a33945e35a5b', 5047),
+                  'r2': ('3c453ac21e515a4ae54c52cd34ee4053', 5069),
+              }
+              for source, prior in expected.items():
+                  actual = public_identity(base(source) + 'latest-lees-pdf.json')
+                  if actual == identity(release.metadata(source)):
+                      continue
+                  if (actual != prior
+                      or public_identity(base(source) + 'lees-pdf/releases/0.1.5/release-manifest.json') != prior):
+                      raise RuntimeError('One-time recovery prior HEAD metadata differs; download refused')
+              print('本次授权恢复已匹配固定清单和旧入口 HEAD 元数据；未下载桶内对象正文')
+
+          # publish 仍先校验全部资产和双源屏障，再执行此一次性旧入口核对。
+          release.check_previous = check_authorized_previous
+          release.publish()
+          PY
       - name: 清除 Draft 装配暂存
         env:
           GH_TOKEN: ${{ github.token }}
