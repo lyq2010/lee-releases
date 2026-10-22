@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       skip_worker:
-        description: "Skip tracking Worker validation for an explicitly authorized client-only release"
+        description: "Skip translation Worker validation for an explicitly authorized client-only release"
         required: false
         type: boolean
         default: false
@@ -192,7 +192,7 @@ jobs:
         shell: pwsh
         run: ./scripts/verify-ui-quality.ps1
 
-      - name: Test Cloudflare tracking worker
+      - name: Test Cloudflare translation worker
         if: ${{ !inputs.skip_worker }}
         working-directory: source/tracking-worker
         shell: pwsh
@@ -203,7 +203,7 @@ jobs:
           pnpm run check
           $config = Get-Content -LiteralPath wrangler.jsonc -Raw -Encoding UTF8 | ConvertFrom-Json
           $declaredRequiredSecrets = @($config.secrets.required)
-          $expectedSecrets = @('ADMIN_TOKEN', 'TRANSLATION_ACCESS_TOKEN')
+          $expectedSecrets = @('TRANSLATION_ACCESS_TOKEN')
           foreach ($secretName in $expectedSecrets) {
             if ($secretName -notin $declaredRequiredSecrets) {
               throw "wrangler.jsonc does not require Worker secret $secretName"
