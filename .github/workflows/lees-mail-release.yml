@@ -57,7 +57,7 @@ jobs:
       - name: Test release tooling
         working-directory: release-repo/release-tools/lees-mail
         shell: pwsh
-        run: python -B -m unittest discover -s tests -v
+        run: python -X utf8 -B -m unittest discover -s tests -v
 
       - name: Create private source read token
         id: source-token

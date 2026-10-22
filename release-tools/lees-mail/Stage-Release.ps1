@@ -103,22 +103,9 @@ $notes = @"
 
 Lee's Mail Windows x64 正式版。
 
-## 安装渠道
-
-- 普通用户下载本 Release 的签名安装程序即可安装或更新 Lee's Mail。
-- Cloudflare 翻译访问密钥不包含在安装包、源码归档或 Release 资产中；仅授权用户可在应用的翻译设置中配置。
-
 ## 更新内容
 
 $releaseChanges
-## 安装与校验
-
-- 运行已签名的安装程序即可安装证书和 MSIX 软件包。
-
-- 安装程序 SHA-256: ``$hash``
-- MSIX SHA-256: ``$msixHash``
-- 签名证书: ``$CertificateThumbprint``
-- 已附带对应的 GPL-3.0 源码归档。
 "@
 New-Item -ItemType Directory -Force (Split-Path $resolvedNotesPath -Parent) | Out-Null
 [IO.File]::WriteAllText($resolvedNotesPath, $notes, [Text.UTF8Encoding]::new($false))
