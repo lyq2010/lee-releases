@@ -15,6 +15,9 @@ spec.loader.exec_module(mirror)
 
 class MirrorTests(unittest.TestCase):
     def setUp(self):
+        network = patch("socket.create_connection", side_effect=AssertionError("network forbidden"))
+        network.start()
+        self.addCleanup(network.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -62,6 +65,7 @@ class MirrorTests(unittest.TestCase):
     def test_cos_verifies_before_pruning_and_after_pruning(self):
         calls = []
         client = Mock()
+        client.list_objects.return_value = {"Contents": []}
         client.upload_file.side_effect = lambda **kwargs: calls.append(kwargs["Key"])
         client.put_object.side_effect = lambda **kwargs: calls.append(kwargs["Key"])
         sdk = types.SimpleNamespace(CosConfig=Mock(), CosS3Client=Mock(return_value=client))
@@ -69,7 +73,7 @@ class MirrorTests(unittest.TestCase):
                "TENCENT_COS_REGION": "fixture", "TENCENT_COS_SECRET_ID": "fixture", "TENCENT_COS_SECRET_KEY": "fixture"}
         with patch.dict(mirror.os.environ, env), patch.dict(sys.modules, {"qcloud_cos": sdk}), \
              patch.object(mirror, "reject_downgrade"), \
-             patch.object(mirror, "verify_public", side_effect=lambda *args: calls.append("verify")), \
+             patch.object(mirror, "verify_cos", side_effect=lambda *args: calls.append("verify")), \
              patch.object(mirror, "prune_old_assets", side_effect=lambda *args: calls.append("prune")):
             mirror.mirror_cos(self.root)
         self.assertEqual(calls, ["releases/" + self.package.name,
@@ -79,9 +83,9 @@ class MirrorTests(unittest.TestCase):
         calls = []
         env = {"R2_PUBLIC_BASE_URL": "https://backup.example", "R2_BUCKET": "test",
                "CLOUDFLARE_API_TOKEN": "fixture", "CLOUDFLARE_ACCOUNT_ID": "fixture"}
-        with patch.dict(mirror.os.environ, env), patch.object(mirror, "wrangler_put", side_effect=lambda *args: calls.append(args[1])), \
+        with patch.dict(mirror.os.environ, env), patch.object(mirror, "r2_keys", return_value=[]), patch.object(mirror, "wrangler_put", side_effect=lambda *args: calls.append(args[1])), \
              patch.object(mirror, "reject_downgrade"), \
-             patch.object(mirror, "verify_public", side_effect=lambda *args: calls.append("verify")), \
+             patch.object(mirror, "verify_r2", side_effect=lambda *args: calls.append("verify")), \
              patch.object(mirror, "prune_old_assets", side_effect=lambda *args: calls.append("prune")):
             mirror.mirror_r2(self.root)
         self.assertEqual(calls, [self.package.name, mirror.MANIFEST_NAME, "verify", "prune", "verify"])
@@ -89,9 +93,9 @@ class MirrorTests(unittest.TestCase):
     def test_failed_verification_does_not_delete_old_versions(self):
         env = {"R2_PUBLIC_BASE_URL": "https://backup.example", "R2_BUCKET": "test",
                "CLOUDFLARE_API_TOKEN": "fixture", "CLOUDFLARE_ACCOUNT_ID": "fixture"}
-        with patch.dict(mirror.os.environ, env), patch.object(mirror, "wrangler_put"), \
+        with patch.dict(mirror.os.environ, env), patch.object(mirror, "r2_keys", return_value=[]), patch.object(mirror, "wrangler_put"), \
              patch.object(mirror, "reject_downgrade"), \
-             patch.object(mirror, "verify_public", side_effect=SystemExit("verify failed")), \
+             patch.object(mirror, "verify_r2", side_effect=SystemExit("verify failed")), \
              patch.object(mirror, "prune_old_assets") as prune:
             with self.assertRaises(SystemExit):
                 mirror.mirror_r2(self.root)
@@ -100,11 +104,17 @@ class MirrorTests(unittest.TestCase):
     def test_refuses_downgrade_before_upload(self):
         env = {"R2_PUBLIC_BASE_URL": "https://backup.example", "R2_BUCKET": "test",
                "CLOUDFLARE_API_TOKEN": "fixture", "CLOUDFLARE_ACCOUNT_ID": "fixture"}
-        with patch.dict(mirror.os.environ, env), patch.object(mirror, "wrangler_put") as upload, \
+        with patch.dict(mirror.os.environ, env), patch.object(mirror, "r2_keys", return_value=[]), patch.object(mirror, "wrangler_put") as upload, \
              patch.object(mirror, "reject_downgrade", side_effect=SystemExit("newer version")):
             with self.assertRaises(SystemExit):
                 mirror.mirror_r2(self.root)
         upload.assert_not_called()
+
+    def test_downgrade_guard_uses_listed_names_without_fetching_feed(self):
+        with patch.object(mirror.urllib.request, "urlopen", side_effect=AssertionError("no body requests")):
+            mirror.reject_downgrade(["releases/LeesEmby_1.8.0_x64-setup.exe"], "1.9.0", "releases")
+            with self.assertRaisesRegex(SystemExit, "newer"):
+                mirror.reject_downgrade(["releases/LeesEmby_1.10.0_x64-setup.exe"], "1.9.0", "releases")
 
 
 if __name__ == "__main__":
