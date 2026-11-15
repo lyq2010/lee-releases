@@ -1,148 +1,70 @@
 #Requires -Version 7.0
 param([Parameter(Mandatory)][string]$SourceRoot,[Parameter(Mandatory)][string]$OutputRoot)
 $ErrorActionPreference='Stop'
-$PSNativeCommandUseErrorActionPreference=$true
 $source=[IO.Path]::GetFullPath($SourceRoot)
 $output=[IO.Path]::GetFullPath($OutputRoot)
-$version=$env:RELEASE_VERSION
-$target=$env:RELEASE_TARGET
-if ($target -notin @('darwin-aarch64','windows-x86_64') -or $version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {throw '发行输入无效'}
-if (($IsMacOS -and $target -ne 'darwin-aarch64') -or ($IsWindows -and $target -ne 'windows-x86_64') -or (!$IsMacOS -and !$IsWindows)) {throw '构建平台不匹配'}
-# Match the shared mirror convention: a bare COS hostname is an HTTPS base.
-$cosBase=([string]$env:LEESPDF_COS_BASE_URL).Trim().TrimEnd('/')
-if(!$cosBase.Contains('://')){$cosBase='https://'+$cosBase}
-$cosUri=$null
-if(![Uri]::TryCreate($cosBase,[UriKind]::Absolute,[ref]$cosUri) -or $cosUri.Scheme -ne 'https' -or !$cosUri.Host -or $cosUri.UserInfo -or $cosUri.Query -or $cosUri.Fragment){throw 'Clean HTTPS COS base URL is required'}
-$env:LEESPDF_COS_BASE_URL=$cosUri.AbsoluteUri.TrimEnd('/')+'/'
-# Dependencies and native workers are prepared on this same disposable runner.
-if (!$env:LEESPDF_RUNTIME_ROOT -or !$env:JAVA_HOME) {throw 'runner 缺少 LEESPDF_RUNTIME_ROOT 或完整 JAVA_HOME'}
-$seed=[IO.Path]::GetFullPath($env:LEESPDF_RUNTIME_ROOT)
-if((Get-FileHash -LiteralPath (Join-Path $seed 'files.sha256.json')).Hash.ToLowerInvariant() -ne $env:LEESPDF_RUNTIME_INDEX_SHA256){throw 'Prepared runtime inventory changed'}
-$seedIndex=Get-Content (Join-Path $seed 'files.sha256.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($seedIndex.schemaVersion -ne 1 -or $seedIndex.target -ne $target) {throw '冻结运行时清单不匹配'}
-$work=Join-Path $env:RUNNER_TEMP ('lees-pdf-'+[guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $work,$output | Out-Null
-$diagnostics=Join-Path $work 'private-build.log'
-function PublicStage([string]$Stage) {
-    if($Stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign','inventory','certificate-import','trust-import')){throw 'Unknown public build stage'}
-    Write-Output ("Build stage: $Stage")
-}
-function Run([string]$Command,[string[]]$Arguments) {
-    $stage=[IO.Path]::GetFileNameWithoutExtension($Command)
-    if($stage -notin @('git','javac','jar','jlink','npm','node','cargo','python','codesign')){throw 'Unknown build stage'}
-    PublicStage $stage
-    $nativePreference=$PSNativeCommandUseErrorActionPreference
-    $PSNativeCommandUseErrorActionPreference=$false
-    $elapsed=[Diagnostics.Stopwatch]::StartNew()
-    try { & $Command @Arguments *> $diagnostics; $commandExit=$LASTEXITCODE } finally {
-        $PSNativeCommandUseErrorActionPreference=$nativePreference
-        $elapsed.Stop()
-        Write-Output ("Build stage duration: {0} {1:F1}s" -f $stage,$elapsed.Elapsed.TotalSeconds)
-    }
-    if ($commandExit -ne 0) {
-        if($env:LEESPDF_DIAGNOSTICS_PUBLIC_KEY){
-            $encrypted=Join-Path $work ("lees-pdf-diagnostics-$target-$($env:GITHUB_RUN_ID).json")
-            & node (Join-Path $PSScriptRoot 'encrypt-diagnostics.mjs') $diagnostics $encrypted
-            if($LASTEXITCODE){throw 'Diagnostic encryption failed; no plaintext uploaded'}
-            & gh release upload $env:PUBLIC_TAG $encrypted --repo lyq2010/lee-releases --clobber
-            if($LASTEXITCODE){throw 'Encrypted diagnostic transfer failed'}
-        }
-        throw 'Build failed; only encrypted diagnostics may be retrieved from the Draft'
-    }
-}
-function Hash([string]$File) {(Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()}
-Push-Location $source
+if(!$IsWindows -or $env:RELEASE_TARGET -ne 'windows-x86_64'){throw '原生macOS尚待验收；禁止回落到旧应用构建'}
+if($env:SOURCE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or $env:RELEASE_VERSION -ne $env:SOURCE_TAG.Substring(1)){throw '源码Tag或版本无效'}
+$revision=(& git -C $source rev-parse HEAD).Trim()
+if((& git -C $source rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revision){throw '源码Tag与检出不符'}
+& git -C $source merge-base --is-ancestor $revision origin/main
+if($LASTEXITCODE){throw '源码Tag不在主线'}
+if((Get-Content -Raw -Encoding UTF8 (Join-Path $source 'package.json') | ConvertFrom-Json).version -ne $env:RELEASE_VERSION){throw '单一产品版本不符'}
+$entry=Join-Path $source 'scripts/release/build-native-candidate.ps1'
+if(!(Test-Path -LiteralPath $entry)){throw '该源码Tag不包含原生发行入口；不构建旧应用'}
+$cache='I:/DevCache'
+$env:TEMP=Join-Path $cache 'Temp';$env:TMP=$env:TEMP
+$env:CARGO_HOME=Join-Path $cache 'cargo';$env:CARGO_TARGET_DIR=Join-Path $cache 'lees-pdf-native-target';$env:CARGO_INCREMENTAL='0'
+$env:PYTHONPYCACHEPREFIX=Join-Path $cache 'python-pycache';$env:PYTHONUTF8='1';$env:NPM_CONFIG_CACHE=Join-Path $cache 'npm-cache'
+$private=Join-Path $cache 'lees-pdf-private-signing'
+$null=New-Item -ItemType Directory -Force -Path $private,$env:TEMP,$env:CARGO_HOME
+if(!$env:LEESPDF_WINDOWS_PFX -or !$env:LEESPDF_WINDOWS_PFX_PASSWORD){throw '缺少受保护的Windows签名凭据'}
+[IO.File]::WriteAllBytes((Join-Path $private 'lees-pdf-windows-signing.pfx'),[Convert]::FromBase64String($env:LEESPDF_WINDOWS_PFX))
+[IO.File]::WriteAllText((Join-Path $private 'lees-pdf-windows-signing.txt'),$env:LEESPDF_WINDOWS_PFX_PASSWORD,[Text.UTF8Encoding]::new($false))
+$certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $private 'lees-pdf-windows-signing.pfx'),$env:LEESPDF_WINDOWS_PFX_PASSWORD,[Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
 try {
-    $revision=(& git rev-parse HEAD).Trim()
-    if($seedIndex.sourceRevision -ne $revision){throw 'Prepared runtime source revision mismatch'}
-    if ((& git rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revision) {throw 'Tag 与源码不一致'}
-    Run git @('merge-base','--is-ancestor',$revision,'origin/main')
-    $tauri=Get-Content 'apps/desktop/src-tauri/tauri.conf.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-    $desktop=Get-Content 'apps/desktop/package.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-    $cargo=Get-Content 'apps/desktop/src-tauri/Cargo.toml' -Raw -Encoding UTF8
-    if ($tauri.version -ne $version -or $desktop.version -ne $version -or $cargo -notmatch ('(?m)^version\s*=\s*"'+[regex]::Escape($version)+'"') -or $tauri.identifier -ne 'app.lees.pdf') {throw '单一发行版本与配置不同步'}
-    $notesFile=Join-Path $work 'release-notes.txt'
-    Run node @((Join-Path $PSScriptRoot 'release-notes.mjs'),$source,$version,$notesFile)
-    $public=Get-Content 'apps/desktop/src-tauri/updater/public-config.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-    $expected=Get-Content (Join-Path $PSScriptRoot 'public-config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($public.releasePublicKey -ne $expected.releasePublicKey -or $public.updaterPublicKey -ne $expected.updaterPublicKey) {throw '公私仓发行公钥不一致'}
-    $runtime=Join-Path $work 'runtime'
-    New-Item -ItemType Directory -Path $runtime | Out-Null
-    foreach ($entry in $seedIndex.files) {
-        if ($entry.path -match '(^/|^[A-Za-z]:|\\|(^|/)\.\.(/|$))' -or $entry.path -match '(?i)\.(pdb|map|java|cpp|rs|ts|tsx|key|pem|pfx|log)$') {throw '运行时包含不允许公开的文件'}
-        $file=Join-Path $seed $entry.path
-        if ((Hash $file) -ne $entry.sha256) {throw '冻结运行时哈希不匹配'}
-        $destination=Join-Path $runtime $entry.path
-        New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
-        Copy-Item -LiteralPath $file -Destination $destination
-    }
-    . (Join-Path $PSScriptRoot 'runtime-inputs.ps1')
-    Assert-LeesPdfNativeSources $source $seedIndex
-    $dependencies=Get-Content 'services/pdf-core/DEPENDENCIES.json' -Raw -Encoding UTF8 | ConvertFrom-Json
-    $jars=@($dependencies.runtimeJars | ForEach-Object {Join-Path $runtime ('m2/'+(Split-Path $_ -Leaf))})
-    foreach($jar in $jars) {if((Hash $jar) -ne $dependencies.sha256.(Split-Path $jar -Leaf)){throw 'Java 依赖哈希不匹配'}}
-    $classes=Join-Path $work 'classes';New-Item -ItemType Directory -Path $classes | Out-Null
-    $javaSources=@(Get-ChildItem 'services/pdf-core/src/main/java' -Recurse -Filter '*.java' | ForEach-Object FullName)
-    $argumentFile=Join-Path $work 'javac.args'
-    @('--release','25','-encoding','UTF-8','-cp',('"'+(($jars -join [IO.Path]::PathSeparator).Replace('\','/'))+'"'),'-d',('"'+$classes.Replace('\','/')+'"'))+@($javaSources | ForEach-Object {'"'+$_.Replace('\','/')+'"'}) | Set-Content $argumentFile -Encoding utf8NoBOM
-    Run (Join-Path $env:JAVA_HOME 'bin/javac') @('@'+$argumentFile)
-    Run (Join-Path $env:JAVA_HOME 'bin/jar') @('--create','--file',(Join-Path $runtime 'lees-pdf-core.jar'),'--main-class','pdf.lees.core.Main','-C',$classes,'.')
-    if($IsWindows){
-        $minimalJdk=Join-Path $work 'jdk-minimal'
-        Run (Join-Path $env:JAVA_HOME 'bin/jlink.exe') @('--add-modules','java.base,java.desktop,java.logging,java.net.http,jdk.httpserver','--strip-debug','--no-header-files','--no-man-pages','--output',$minimalJdk)
-        $stagedJdk=[IO.Path]::GetFullPath((Join-Path $runtime 'jdk'))
-        if(!$stagedJdk.StartsWith($work+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'JDK staging path escapes disposable work directory'}
-        Remove-Item -LiteralPath $stagedJdk -Recurse -Force
-        Move-Item -LiteralPath $minimalJdk -Destination $stagedJdk
-    }
-    Run cargo @('fetch','--manifest-path','apps/desktop/src-tauri/Cargo.toml')
-    Run python @('scripts/release/collect-licenses.py',$source,$runtime)
-    # Complete license material is a prerequisite, including JDK, PDFium, fonts, native SDKs and models.
-    if (!(Test-Path (Join-Path $runtime 'licenses/THIRD-PARTY-NOTICES.txt'))) {throw '冻结运行时缺少完整第三方分发材料'}
-    PublicStage inventory
-    $runtimeFiles=@(Get-ChildItem $runtime -File -Recurse | ForEach-Object {@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');sha256=Hash $_.FullName;size=$_.Length}} | Sort-Object path)
-    @{schemaVersion=1;target=$target;files=$runtimeFiles} | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $runtime 'files.sha256.json') -Encoding utf8NoBOM
-    $config=@{bundle=@{resources=@{};createUpdaterArtifacts=$true};plugins=@{updater=@{pubkey=$public.updaterPublicKey}}}
-    $config.bundle.resources[$runtime+'/']='runtime/'
-    if ($IsMacOS) {$config.bundle.targets=@('app','dmg');$config.bundle.macOS=@{signingIdentity='-';minimumSystemVersion='26.0'}}
-    else {
-        if (!$env:LEESPDF_WINDOWS_PFX -or !$env:LEESPDF_WINDOWS_PFX_PASSWORD) {throw '公开仓缺少本产品 Windows 签名证书 Secret'}
-        PublicStage certificate-import
-        $pfx=Join-Path $work 'publisher.pfx';[IO.File]::WriteAllBytes($pfx,[Convert]::FromBase64String($env:LEESPDF_WINDOWS_PFX))
-        $cert=Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:LEESPDF_WINDOWS_PFX_PASSWORD -AsPlainText -Force)
-        if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($cert.RawData)).ToLowerInvariant() -ne $public.windowsCertificateSha256) {throw 'Windows 发行证书身份错误'}
-        $certificateName="lees-pdf-$version-$target-publisher.cer"
-        $certificateFile=Join-Path $output $certificateName
-        Export-Certificate -Cert $cert -FilePath $certificateFile | Out-Null
-        # Trust only the already hash-verified public certificate on this disposable runner.
-        PublicStage trust-import
-        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-        Import-Certificate -FilePath $certificateFile -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
-        $config.bundle.targets=@('nsis')
-        . (Join-Path $PSScriptRoot 'windows-config.ps1')
-        $config.bundle.windows=New-LeesPdfWindowsConfig -SourceRoot $source -CertificateThumbprint $cert.Thumbprint
-    }
-    $platformConfig=if($IsMacOS){'apps/desktop/src-tauri/tauri.macos.conf.json'}else{'apps/desktop/src-tauri/tauri.windows.conf.json'}
-    # Replace this disposable checkout's platform resource mapping, so old .tools paths cannot be merged in.
-    $config | ConvertTo-Json -Depth 9 | Set-Content $platformConfig -Encoding utf8NoBOM
-    $configFile=Join-Path $work 'release-config.json';$config | ConvertTo-Json -Depth 9 | Set-Content $configFile -Encoding utf8NoBOM
-    $env:LEESPDF_RELEASE_BUILD='1';$env:CARGO_TARGET_DIR=Join-Path $work 'cargo'
-    Run npm @('run','tauri','--workspace','@lees/desktop','--','build','--config',$configFile)
-    $bundle=Join-Path $env:CARGO_TARGET_DIR 'release/bundle'
-    $updater=if($IsMacOS){Get-ChildItem $bundle -Recurse -Filter '*.app.tar.gz'}else{Get-ChildItem $bundle -Recurse -Filter '*-setup.exe'}
-    $installer=if($IsMacOS){Get-ChildItem $bundle -Recurse -Filter '*.dmg'}else{$updater}
-    if (@($updater).Count -ne 1 -or @($installer).Count -ne 1) {throw '安装包不唯一'}
-    if($IsWindows){if((Get-AuthenticodeSignature $installer.FullName).Status -ne 'Valid'){throw 'Windows 签名未通过系统信任核对'}}
-    else { $app=Get-ChildItem (Join-Path $bundle 'macos') -Directory -Filter '*.app';Run codesign @('--verify','--deep','--strict',$app.FullName) }
-    $updateName="lees-pdf-$version-$target"+$(if($IsMacOS){'.app.tar.gz'}else{'-setup.exe'})
-    $installName=if($IsMacOS){"lees-pdf-$version-$target.dmg"}else{$updateName}
-    Copy-Item $updater.FullName (Join-Path $output $updateName)
-    if($IsMacOS){Copy-Item $installer.FullName (Join-Path $output $installName)}
-    $noticeName="lees-pdf-$version-$target-NOTICES.txt"
-    Copy-Item (Join-Path $runtime 'licenses/THIRD-PARTY-NOTICES.txt') (Join-Path $output $noticeName)
-    $inventoryName="lees-pdf-$version-$target-runtime.json"
-    Copy-Item (Join-Path $runtime 'files.sha256.json') (Join-Path $output $inventoryName)
-    @{target=$target;version=$version;releaseNotes=(Get-Content -LiteralPath $notesFile -Raw -Encoding UTF8);sourceRevision=$revision;bundleId='app.lees.pdf';updater=$updateName;installer=$installName;updaterSignature=(Get-Content ($updater.FullName+'.sig') -Raw -Encoding UTF8).Trim();runtimeManifestSha256=Hash (Join-Path $runtime 'files.sha256.json');signerCertificateSha256=$(if($IsWindows){$public.windowsCertificateSha256}else{$null});materials=@($noticeName,$inventoryName)+$(if($IsWindows){@($certificateName)}else{@()})} | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $output "$target.json") -Encoding utf8NoBOM
-    Copy-Item 'apps/desktop/src-tauri/updater/public-config.json' (Join-Path $output "$target-public-config.json")
-} finally {Pop-Location}
-Write-Output "Lee’s PDF $target $version 发行资产已核对；尚未发布"
+    $pinned=Get-Content -Raw -Encoding UTF8 (Join-Path $source 'crates/desktop-update/assets/public-config.json') | ConvertFrom-Json
+    $public=Get-Content -Raw -Encoding UTF8 (Join-Path $PSScriptRoot 'public-config.json') | ConvertFrom-Json
+    if($public.releasePublicKey -ne $pinned.releasePublicKey -or $public.updaterPublicKey -ne $pinned.updaterPublicKey -or [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($certificate.RawData)).ToLowerInvariant() -ne $pinned.windowsCertificateSha256){throw '公私仓签名身份不一致'}
+    # Trust only the hash-verified public certificate on this disposable CI user.
+    $certFile=Join-Path $private 'publisher.cer';[IO.File]::WriteAllBytes($certFile,$certificate.RawData)
+    $null=Import-Certificate -FilePath $certFile -CertStoreLocation Cert:\CurrentUser\Root
+    $null=Import-Certificate -FilePath $certFile -CertStoreLocation Cert:\CurrentUser\TrustedPeople
+}finally{$certificate.Dispose()}
+$tools=Get-Content -Raw -Encoding UTF8 (Join-Path $source 'native/dependencies/windows-tools.json') | ConvertFrom-Json
+$diagnostics=Join-Path $cache 'lees-pdf-native-build.log'
+$candidate=Join-Path $cache 'lees-pdf-native-candidate'
+$nativePreference=$PSNativeCommandUseErrorActionPreference
+$PSNativeCommandUseErrorActionPreference=$false
+try {
+    Push-Location $source
+    try {
+        & cargo fetch --locked *> $diagnostics
+        if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
+        & python -m pip install cryptography==50.0.2 *>> $diagnostics
+        if($LASTEXITCODE){throw '签名工具依赖准备失败'}
+        $signer=Join-Path $cache 'lees-pdf-updater-signer'
+        & npm install --prefix $signer --no-audit --no-fund --ignore-scripts "$($tools.updaterSigner.package)@$($tools.updaterSigner.version)" *>> $diagnostics
+        if($LASTEXITCODE){throw '版本绑定签名工具准备失败'}
+        $archive=Join-Path $cache 'nsis-3.11.zip'
+        Invoke-WebRequest -Uri $tools.nsis.url -OutFile $archive
+        if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $tools.nsis.sha256){throw 'NSIS固定来源校验失败'}
+        $nsis=Join-Path $cache 'nsis-3.11';Expand-Archive -LiteralPath $archive -DestinationPath $nsis
+        $compiler=@(Get-ChildItem -LiteralPath $nsis -Recurse -File -Filter makensis.exe)
+        if($compiler.Count -ne 1){throw 'NSIS入口不唯一'}
+        $clang=Split-Path (Get-Command clang.exe -ErrorAction Stop).Source -Parent
+        if(!(Test-Path -LiteralPath (Join-Path $clang 'libclang.dll'))){throw 'runner缺少现有LLVM libclang'}
+        & pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -UpdaterSigner (Join-Path $signer 'node_modules/@tauri-apps/cli/tauri.js') -ClangDirectory $clang *>> $diagnostics
+        if($LASTEXITCODE){throw '原生候选构建/验签失败，私有诊断留在runner'}
+    }finally{Pop-Location}
+}finally{$PSNativeCommandUseErrorActionPreference=$nativePreference}
+$row=Get-Content -Raw -Encoding UTF8 (Join-Path $candidate 'windows-x86_64.json') | ConvertFrom-Json
+if(!$row.native -or $row.sourceDirty -or $row.sourceRevision -ne $revision -or $row.version -ne $env:RELEASE_VERSION){throw '候选源码或生产身份不符'}
+$null=New-Item -ItemType Directory -Path $output
+$allowed=Get-Content -Raw -Encoding UTF8 (Join-Path $candidate 'candidate-files.json') | ConvertFrom-Json
+if($allowed.Count -gt 10){throw '候选材料超过边界'}
+foreach($name in $allowed){
+    if($name -ne [IO.Path]::GetFileName($name) -or $name -match '(?i)\.(pfx|pem|key|log|pdb|rs|java|ts|tsx)$'){throw '候选输出含私有材料'}
+    Copy-Item -LiteralPath (Join-Path $candidate $name) -Destination (Join-Path $output $name)
+}
+Write-Output 'Windows原生候选与版本绑定签名已核对；未发布，macOS待验。'

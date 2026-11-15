@@ -1,90 +1,29 @@
-name: Lee's PDF Release
+name: Lee's PDF Native Windows Candidate
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 私有源码 Tag（例如 v1.0.0）
+        description: 已验收的原生源码 Tag（vX.Y.Z）；仅构建候选，不发布
         required: true
         type: string
-      platform:
-        description: 构建平台；单端重试复用同一 Draft 已核对的另一端资产
-        type: choice
-        default: all
-        options: [all, windows-x86_64, darwin-aarch64]
-      promote:
-        description: 复用已有 Draft，补齐镜像后重试晋升；正常构建会直接发布
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
-  group: lees-pdf-release
+  group: lees-pdf-native-windows
   cancel-in-progress: false
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
-      matrix: ${{ steps.version.outputs.matrix }}
-    steps:
-      - id: version
-        env:
-          SOURCE_TAG: ${{ inputs.tag }}
-          BUILD_PLATFORM: ${{ inputs.platform }}
-        run: |
-          python3 - <<'PY'
-          import os,re,json
-          tag=os.environ['SOURCE_TAG']
-          if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',tag):
-              raise SystemExit('源码 Tag 格式无效')
-          platform=os.environ.get('BUILD_PLATFORM') or 'all'
-          rows=[{'target':'windows-x86_64','runner':'windows-2025'}, {'target':'darwin-aarch64','runner':'macos-26'}]
-          if platform not in ('all','windows-x86_64','darwin-aarch64'):
-              raise SystemExit('构建平台无效')
-          if platform != 'all':
-              rows=[row for row in rows if row['target']==platform]
-          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
-              output.write(f'version={tag[1:]}\ntag=lees-pdf-{tag}\n')
-              output.write('matrix='+json.dumps({'include':rows},separators=(',',':'))+'\n')
-          PY
-  prepare-draft:
-    if: ${{ !inputs.promote }}
-    needs: validate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: 准备公开资产暂存 Draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          if gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json isDraft >/dev/null 2>&1; then
-            test "$(gh release view "$PUBLIC_TAG" --repo lyq2010/lee-releases --json isDraft --jq .isDraft)" = true
-          else
-            gh release create "$PUBLIC_TAG" --repo lyq2010/lee-releases --target main --draft --latest=false --title "Lee’s PDF $RELEASE_VERSION" --notes "双平台发行资产准备中；尚未公布。"
-          fi
   build:
-    if: ${{ !inputs.promote }}
-    needs: [validate, prepare-draft]
-    permissions:
-      contents: write
-    # 一次性 GitHub 托管 runner；私有源码和诊断不进入公开缓存或资产。
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-2025
     environment: lees-pdf-release
     env:
+      RELEASE_TARGET: windows-x86_64
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v7
         with:
           path: release-repo
           persist-credentials: false
-      - name: 创建仅限 PDF 私有仓的只读令牌
+      - name: 创建PDF私有源码与固定SDK只读令牌
         id: source
         uses: actions/create-github-app-token@v3
         with:
@@ -105,184 +44,42 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: 配置公开 Cargo 依赖下载目录
+      - name: 配置一次性原生构建目录
         shell: pwsh
+        env:
+          SOURCE_TAG: ${{ inputs.tag }}
         run: |
-          "CARGO_HOME=$([IO.Path]::Combine($env:RUNNER_TEMP,'lees-pdf-public-cargo'))" >> $env:GITHUB_ENV
-      # 只缓存 crates.io 原始归档；私有源码、编译输出、日志和凭据不进入公开缓存。
+          if($env:SOURCE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'){throw '源码Tag格式无效'}
+          if(Test-Path 'I:\'){throw 'runner已有I盘，不改写既有盘符'}
+          $root=Join-Path $env:RUNNER_TEMP 'lees-pdf-native'
+          $null=New-Item -ItemType Directory -Path $root
+          subst I: $root
+          if($LASTEXITCODE){throw '一次性缓存盘配置失败'}
+          $null=New-Item -ItemType Directory -Force -Path I:/DevCache/Temp,I:/DevCache/cargo,I:/DevCache/tools
+          if(Test-Path private-source/.tools){throw '源码检出含未知依赖目录'}
+          $null=New-Item -ItemType Junction -Path private-source/.tools -Target I:/DevCache/tools
+          "CARGO_HOME=I:/DevCache/cargo" >> $env:GITHUB_ENV
+          "RELEASE_VERSION=$($env:SOURCE_TAG.Substring(1))" >> $env:GITHUB_ENV
+      # Only public crate archives are cached, never private build output or diagnostics.
       - uses: actions/cache@v5
         with:
-          path: ${{ env.CARGO_HOME }}/registry/cache/index.crates.io-*/*.crate
-          key: lees-pdf-public-crates-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('private-source/apps/desktop/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            lees-pdf-public-crates-v1-${{ runner.os }}-${{ runner.arch }}-
-      - name: 在隔离 runner 从固定来源准备依赖与原生组件
+          path: I:/DevCache/cargo/registry/cache/index.crates.io-*/*.crate
+          key: lees-pdf-native-crates-${{ runner.os }}-${{ hashFiles('private-source/Cargo.lock') }}
+      - name: 构建签名原生候选（私有诊断不上传）
         shell: pwsh
         env:
           SOURCE_TAG: ${{ inputs.tag }}
-          RELEASE_TARGET: ${{ matrix.target }}
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          LEESPDF_DIAGNOSTICS_PUBLIC_KEY: ${{ vars.LEESPDF_DIAGNOSTICS_PUBLIC_KEY }}
-        run: '& release-repo/release-tools/lees-pdf/runtime.ps1 -SourceRoot private-source'
-      - name: 核对精确 JDK 编译器
-        shell: pwsh
-        env:
-          RELEASE_TARGET: ${{ matrix.target }}
-        run: '& release-repo/release-tools/lees-pdf/prepare-jdk.ps1'
-      - name: 构建与核对最终包（私有诊断留在隔离 runner）
-        shell: pwsh
-        env:
-          SOURCE_TAG: ${{ inputs.tag }}
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          LEESPDF_DIAGNOSTICS_PUBLIC_KEY: ${{ vars.LEESPDF_DIAGNOSTICS_PUBLIC_KEY }}
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-          RELEASE_TARGET: ${{ matrix.target }}
-          LEESPDF_COS_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY_PASSWORD }}
+          GH_TOKEN: ${{ steps.source.outputs.token }}
           LEESPDF_WINDOWS_PFX: ${{ secrets.LEESPDF_WINDOWS_PFX_BASE64 }}
           LEESPDF_WINDOWS_PFX_PASSWORD: ${{ secrets.LEESPDF_WINDOWS_PFX_PASSWORD }}
-        run: |
-          & release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output
-      - name: 将公开构建资产上传同一 Draft
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: |
-          $assets=@(Get-ChildItem public-output -File | ForEach-Object FullName)
-          if(!$assets.Count){throw '公开构建资产缺失'}
-          gh release upload $env:PUBLIC_TAG @assets --repo lyq2010/lee-releases --clobber
-          if($LASTEXITCODE){throw 'Draft 上传失败'}
-  draft:
-    if: ${{ !inputs.promote }}
-    needs: [validate, build]
-    runs-on: ubuntu-latest
-    environment: lees-pdf-release
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY_PASSWORD }}
+        run: '& release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output'
+      - name: 保留核对后的公开候选材料
+        uses: actions/upload-artifact@v6
         with:
-          persist-credentials: false
-      - name: 读取双端 Draft 资产
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
-      - name: 核对双端身份，签名发行清单并建立 Draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          LEESPDF_RELEASE_PRIVATE_KEY: ${{ secrets.LEESPDF_RELEASE_PRIVATE_KEY }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-        run: node release-tools/lees-pdf/manifest.mjs public-output
-  # COS/R2 核对仅允许 HEAD/元数据，不得 GET、Range 或流式下载对象正文。
-  mirror:
-    if: ${{ always() && !inputs.promote && needs.validate.result == 'success' && needs.draft.result == 'success' }}
-    needs: [validate, draft]
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    environment: lees-pdf-release
-    strategy:
-      fail-fast: false
-      matrix:
-        source: [cos, r2]
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: 下载已签双端 Draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
-      - name: 安装镜像依赖
-        run: python3 -m pip install cos-python-sdk-v5==1.9.38
-      - name: 一次安装固定版本 R2 上传工具
-        if: ${{ matrix.source == 'r2' }}
-        run: |
-          npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
-          echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
-      - name: 上传不可变资产并核对 HEAD 元数据
-        env:
-          MIRROR: ${{ matrix.source }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
-          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
-          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
-          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
-          R2_BUCKET: packing-list-releases
-        run: python3 release-tools/lees-pdf/mirror.py stage public-output
-      - name: 上传本轮双源就绪凭据
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release upload "$PUBLIC_TAG" public-output/readiness-${{ matrix.source }}.json --repo lyq2010/lee-releases --clobber
-  promote:
-    if: ${{ always() && needs.validate.result == 'success' && ((!inputs.promote && needs.mirror.result == 'success') || (inputs.promote && needs.mirror.result == 'skipped')) }}
-    needs: [validate, mirror]
-    runs-on: ubuntu-latest
-    environment: lees-pdf-release
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: 读取同一 Draft
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release download "$PUBLIC_TAG" --repo lyq2010/lee-releases --dir public-output
-      - run: python3 -m pip install cos-python-sdk-v5==1.9.38
-      - name: 一次安装固定版本 R2 上传工具
-        run: |
-          npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
-          echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
-      - name: 核对双源 HEAD 元数据、晋升更新指针并清理后复核
-        env:
-          RETRY_MIRRORS: ${{ inputs.promote }}
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-          COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
-          TENCENT_COS_BUCKET: ${{ secrets.TENCENT_COS_BUCKET }}
-          TENCENT_COS_REGION: ${{ secrets.TENCENT_COS_REGION }}
-          TENCENT_COS_SECRET_ID: ${{ secrets.TENCENT_COS_SECRET_ID }}
-          TENCENT_COS_SECRET_KEY: ${{ secrets.TENCENT_COS_SECRET_KEY }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
-          R2_BUCKET: packing-list-releases
-        run: |
-          if [[ "$RETRY_MIRRORS" == true ]]; then
-            MIRROR=cos python3 release-tools/lees-pdf/mirror.py stage public-output
-            MIRROR=r2 python3 release-tools/lees-pdf/mirror.py stage public-output
-          fi
-          python3 release-tools/lees-pdf/mirror.py release public-output
-      - name: 清除 Draft 装配暂存
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: |
-          python3 - <<'PY'
-          import json,os,subprocess
-          tag=os.environ['PUBLIC_TAG']
-          release=json.loads(subprocess.check_output(['gh','release','view',tag,'--repo','lyq2010/lee-releases','--json','assets'],text=True))
-          temporary={'darwin-aarch64.json','windows-x86_64.json','darwin-aarch64-public-config.json','windows-x86_64-public-config.json','readiness-cos.json','readiness-r2.json','lees-pdf-build-status-windows-x86_64.json'}
-          for asset in release['assets']:
-              name=asset['name']
-              if name in temporary or (name.startswith('lees-pdf-diagnostics-') and name.endswith('.json')):
-                  subprocess.run(['gh','release','delete-asset',tag,name,'--repo','lyq2010/lee-releases','--yes'],check=True)
-          PY
-      - name: 公布发行
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
-        run: gh release edit "$PUBLIC_TAG" --repo lyq2010/lee-releases --draft=false --latest=false
+          name: lees-pdf-native-windows-${{ env.RELEASE_VERSION }}
+          path: public-output/*
+          if-no-files-found: error
+          retention-days: 7
+      # Product publication remains gated by final package, macOS and device acceptance.

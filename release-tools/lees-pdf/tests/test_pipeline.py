@@ -1,111 +1,56 @@
-"""Guard workflow configuration without adding runtime or test dependencies."""
+"""Native candidate boundaries; failures occur before credentials or builds."""
 from pathlib import Path
-import re
-import json
 import os
-import textwrap
-from unittest.mock import patch
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-WORKFLOW = (ROOT / '.github/workflows/lees-pdf-release.yml').read_text(encoding='utf-8')
-
-
-def job(name):
-    return re.search(r'^  ' + re.escape(name) + r':\n(.*?)(?=^  [^ \n]+:|\Z)', WORKFLOW, re.M | re.S)[1]
+BUILD = ROOT / "release-tools/lees-pdf/build.ps1"
+WORKFLOW = (ROOT / ".github/workflows/lees-pdf-release.yml").read_text("utf-8")
 
 
 class PipelineTests(unittest.TestCase):
-    def test_release_prepares_dependencies_on_runner_without_private_archives(self):
-        build = job('build')
-        self.assertNotIn('runtime_tag:', WORKFLOW)
-        self.assertNotIn('RUNTIME_SHA256:', build)
-        self.assertIn("PYTHONUTF8: '1'", build)
-        self.assertIn('SOURCE_TAG: ${{ inputs.tag }}', build)
-        self.assertIn('runtime.ps1 -SourceRoot private-source', build)
-        runtime = (ROOT / 'release-tools/lees-pdf/runtime.ps1').read_text(encoding='utf-8')
-        self.assertNotIn('gh release download', runtime)
-        self.assertIn('prepare-windows.ps1', runtime)
-        self.assertIn('scripts/release/prepare-macos.sh', runtime)
-        self.assertIn('LEESPDF_RUNTIME_INDEX_SHA256=', runtime)
-        publisher = (ROOT / 'release-tools/lees-pdf/build.ps1').read_text(encoding='utf-8')
-        self.assertIn('$seedIndex.sourceRevision -ne $revision', publisher)
-        self.assertIn('Assert-LeesPdfNativeSources', publisher)
-        self.assertNotIn('LEESPDF_RUNTIME_SOURCE_INDEX', publisher)
-    def test_temurin_separate_jmods_remain_version_and_hash_pinned(self):
-        windows = (ROOT / 'release-tools/lees-pdf/prepare-windows.ps1').read_text(encoding='utf-8')
-        self.assertIn('OpenJDK25U-jmods_x64_windows_hotspot_25.0.4.1_1.zip', windows)
-        self.assertIn('c6b6b19ba9ab28bb4c15b936a7cef40dedcd99ab69f69109dcb0ffad805f0847', windows)
-        self.assertIn("'java.base@25.0.4.1'", windows)
-        jdk = (ROOT / 'release-tools/lees-pdf/prepare-jdk.ps1').read_text(encoding='utf-8')
-        self.assertIn("'lib/modules'", jdk)
-        self.assertNotIn("'jmods/java.base.jmod'", jdk)
+    def reject(self, target, tag, version, message):
+        env = os.environ | {"RELEASE_TARGET": target, "SOURCE_TAG": tag, "RELEASE_VERSION": version}
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-File", str(BUILD), "-SourceRoot", str(ROOT),
+             "-OutputRoot", str(ROOT / "never-created-output")],
+            capture_output=True, text=True, encoding="utf-8", env=env,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(message, result.stderr)
+        self.assertFalse((ROOT / "never-created-output").exists())
 
-    def test_promotion_reuses_draft_without_rebuilding_and_uses_one_release_operation(self):
-        self.assertIn('!inputs.promote', job('mirror'))
-        promotion = job('promote')
-        self.assertIn("needs.mirror.result == 'skipped'", promotion)
-        self.assertEqual(promotion.count('gh release download'), 1)
-        self.assertIn('mirror.py release public-output', promotion)
-        self.assertNotIn('mirror.py cleanup', promotion)
-        self.assertIn('--draft=false --latest=false', promotion)
-        self.assertNotIn('readiness-r2.json lees-pdf-build-status', promotion)
+    def test_rejects_macos_before_building_or_reading_credentials(self):
+        self.reject("aarch64-apple-darwin", "v0.1.7", "0.1.7", "禁止回落到旧应用构建")
 
-    def test_promotion_retry_repairs_mirrors_before_publishing(self):
-        promotion = job('promote')
-        self.assertIn('RETRY_MIRRORS: ${{ inputs.promote }}', promotion)
-        self.assertIn('if [[ "$RETRY_MIRRORS" == true ]]; then', promotion)
-        self.assertLess(promotion.index('MIRROR=cos python3'), promotion.index('MIRROR=r2 python3'))
-        self.assertLess(promotion.index('MIRROR=r2 python3'), promotion.index('mirror.py release public-output'))
-        self.assertNotIn('tauri build', promotion)
+    def test_rejects_untrusted_tag_and_mismatched_version(self):
+        for tag, version in (("main", "0.1.7"), ("v0.1.7", "0.1.8"), ("v01.1.7", "01.1.7")):
+            with self.subTest(tag=tag, version=version):
+                self.reject("windows-x86_64", tag, version, "源码Tag或版本无效")
 
-    def test_draft_cleanup_is_repeatable_when_some_temporary_assets_are_absent(self):
-        promotion=job('promote')
-        cleanup=promotion.split('name: 清除 Draft 装配暂存',1)[1].split('name: 公布发行',1)[0]
-        code=re.search(r"python3 - <<'PY'\n(.*?)^          PY\n",cleanup,re.M|re.S)
-        self.assertIsNotNone(code)
-        body=textwrap.dedent(code[1])
-        for temporary in (['readiness-r2.json'],[]):
-            assets=[{'name':name} for name in temporary+['release-manifest.json','SHA256SUMS','lees-pdf-0.1.4-windows-x86_64-setup.exe']]
-            with patch.dict(os.environ,{'PUBLIC_TAG':'lees-pdf-v0.1.4'}), \
-                 patch('subprocess.check_output',return_value=json.dumps({'assets':assets})), \
-                 patch('subprocess.run') as remove:
-                exec(body,{})
-                self.assertEqual([call.args[0][4] for call in remove.call_args_list],temporary)
-                self.assertTrue(all(call.kwargs['check'] for call in remove.call_args_list))
+    def test_manual_candidate_cannot_publish_or_mix_platforms(self):
+        self.assertIn("workflow_dispatch:", WORKFLOW)
+        self.assertIn("runs-on: windows-2025", WORKFLOW)
+        self.assertIn("contents: read", WORKFLOW)
+        self.assertNotIn("contents: write", WORKFLOW)
+        for forbidden in ("tauri build", "gh release", "mirror.py", "prepare-jdk", "promote:"):
+            self.assertNotIn(forbidden, WORKFLOW)
+        self.assertIn("public-output/*", WORKFLOW)
+        self.assertNotIn("path: I:/DevCache\n", WORKFLOW)
 
-    def test_normal_release_and_promotion_retry_gate(self):
-        condition = re.search(r"^    if: \$\{\{ (.*?) \}\}$", job('promote'), re.M)[1]
-        for promote in (False, True):
-            for validation in ('success', 'failure', 'cancelled', 'skipped'):
-                for mirror in ('success', 'failure', 'cancelled', 'skipped'):
-                    expression = condition.replace('always()', 'True')
-                    expression = expression.replace('inputs.promote', str(promote))
-                    expression = expression.replace('needs.validate.result', repr(validation))
-                    expression = expression.replace('needs.mirror.result', repr(mirror))
-                    expression = expression.replace('&&', ' and ').replace('||', ' or ')
-                    expression = re.sub(r'!(?!=)', ' not ', expression)
-                    actual = eval(expression.strip(), {'__builtins__': {}}, {})
-                    expected = validation == 'success' and mirror == ('skipped' if promote else 'success')
-                    with self.subTest(promote=promote, validation=validation, mirror=mirror):
-                        self.assertEqual(actual, expected)
-
-    def test_bucket_verification_is_explicitly_head_only(self):
-        self.assertIn('COS/R2 核对仅允许 HEAD/元数据', WORKFLOW)
-        self.assertIn('GH_TOKEN: ${{ github.token }}', job('promote'))
-        self.assertIn('HEAD 元数据', job('mirror'))
-        self.assertIn('HEAD 元数据', job('promote'))
-
-    def test_cache_contains_only_public_registry_archives(self):
-        build = job('build')
-        self.assertEqual(build.count('uses: actions/cache@'), 1)
-        cache = build.split('uses: actions/cache@', 1)[1].split('      - ', 1)[0]
-        paths = re.findall(r'^          path: (.*)$', cache, re.M)
-        self.assertEqual(paths, ['${{ env.CARGO_HOME }}/registry/cache/index.crates.io-*/*.crate'])
-        for name in ('mirror', 'promote'):
-            self.assertEqual(job(name).count('wrangler@4.151.0'), 1)
-            self.assertIn('LEESPDF_WRANGLER_CLI=', job(name))
+    def test_only_public_registry_archives_are_cached(self):
+        self.assertEqual(WORKFLOW.count("uses: actions/cache@"), 1)
+        self.assertIn("path: I:/DevCache/cargo/registry/cache/index.crates.io-*/*.crate", WORKFLOW)
+        build = BUILD.read_text("utf-8")
+        self.assertIn("build-native-candidate.ps1", build)
+        self.assertIn("$row.sourceDirty", build)
+        self.assertIn("$row.sourceRevision -ne $revision", build)
+        self.assertIn("candidate-files.json", build)
+        self.assertIn("windowsCertificateSha256", build)
+        self.assertIn("--ignore-scripts", build)
+        self.assertNotIn("tauri build", build)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
