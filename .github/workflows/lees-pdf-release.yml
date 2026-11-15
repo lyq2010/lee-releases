@@ -40,10 +40,6 @@ jobs:
           token: ${{ steps.source.outputs.token }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          package-manager-cache: false
       - name: 配置一次性原生构建目录
         shell: pwsh
         env:
@@ -72,8 +68,8 @@ jobs:
           GH_TOKEN: ${{ steps.source.outputs.token }}
           LEESPDF_WINDOWS_PFX: ${{ secrets.LEESPDF_WINDOWS_PFX_BASE64 }}
           LEESPDF_WINDOWS_PFX_PASSWORD: ${{ secrets.LEESPDF_WINDOWS_PFX_PASSWORD }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY_PASSWORD }}
+          LEES_UPDATER_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}
+          LEES_UPDATER_PRIVATE_KEY_PASSWORD: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY_PASSWORD }}
         run: '& release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output'
       - name: 保留核对后的公开候选材料
         uses: actions/upload-artifact@v6

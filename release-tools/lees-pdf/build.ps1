@@ -12,10 +12,11 @@ if($LASTEXITCODE){throw '源码Tag不在主线'}
 if((Get-Content -Raw -Encoding UTF8 (Join-Path $source 'package.json') | ConvertFrom-Json).version -ne $env:RELEASE_VERSION){throw '单一产品版本不符'}
 $entry=Join-Path $source 'scripts/release/build-native-candidate.ps1'
 if(!(Test-Path -LiteralPath $entry)){throw '该源码Tag不包含原生发行入口；不构建旧应用'}
+if(!(Test-Path -LiteralPath (Join-Path $source 'crates/desktop-update/examples/sign-native-package.rs'))){throw '该源码Tag不包含原生更新签名工具；不回落到旧签名链'}
 $cache='I:/DevCache'
 $env:TEMP=Join-Path $cache 'Temp';$env:TMP=$env:TEMP
 $env:CARGO_HOME=Join-Path $cache 'cargo';$env:CARGO_TARGET_DIR=Join-Path $cache 'lees-pdf-native-target';$env:CARGO_INCREMENTAL='0'
-$env:PYTHONPYCACHEPREFIX=Join-Path $cache 'python-pycache';$env:PYTHONUTF8='1';$env:NPM_CONFIG_CACHE=Join-Path $cache 'npm-cache'
+$env:PYTHONPYCACHEPREFIX=Join-Path $cache 'python-pycache';$env:PYTHONUTF8='1'
 $private=Join-Path $cache 'lees-pdf-private-signing'
 $null=New-Item -ItemType Directory -Force -Path $private,$env:TEMP,$env:CARGO_HOME
 if(!$env:LEESPDF_WINDOWS_PFX -or !$env:LEESPDF_WINDOWS_PFX_PASSWORD){throw '缺少受保护的Windows签名凭据'}
@@ -43,9 +44,6 @@ try {
         if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
         & python -m pip install cryptography==50.0.2 *>> $diagnostics
         if($LASTEXITCODE){throw '签名工具依赖准备失败'}
-        $signer=Join-Path $cache 'lees-pdf-updater-signer'
-        & npm install --prefix $signer --no-audit --no-fund --ignore-scripts "$($tools.updaterSigner.package)@$($tools.updaterSigner.version)" *>> $diagnostics
-        if($LASTEXITCODE){throw '版本绑定签名工具准备失败'}
         $archive=Join-Path $cache 'nsis-3.11.zip'
         Invoke-WebRequest -Uri $tools.nsis.url -OutFile $archive
         if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $tools.nsis.sha256){throw 'NSIS固定来源校验失败'}
@@ -54,7 +52,7 @@ try {
         if($compiler.Count -ne 1){throw 'NSIS入口不唯一'}
         $clang=Split-Path (Get-Command clang.exe -ErrorAction Stop).Source -Parent
         if(!(Test-Path -LiteralPath (Join-Path $clang 'libclang.dll'))){throw 'runner缺少现有LLVM libclang'}
-        & pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -UpdaterSigner (Join-Path $signer 'node_modules/@tauri-apps/cli/tauri.js') -ClangDirectory $clang *>> $diagnostics
+        & pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -ClangDirectory $clang *>> $diagnostics
         if($LASTEXITCODE){throw '原生候选构建/验签失败，私有诊断留在runner'}
     }finally{Pop-Location}
 }finally{$PSNativeCommandUseErrorActionPreference=$nativePreference}

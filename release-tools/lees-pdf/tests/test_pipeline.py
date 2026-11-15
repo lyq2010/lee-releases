@@ -48,8 +48,11 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("$row.sourceRevision -ne $revision", build)
         self.assertIn("candidate-files.json", build)
         self.assertIn("windowsCertificateSha256", build)
-        self.assertIn("--ignore-scripts", build)
-        self.assertNotIn("tauri build", build)
+        for forbidden in ("npm install", "UpdaterSigner", "@tauri-apps/cli", "tauri build"):
+            self.assertNotIn(forbidden, build)
+        self.assertNotIn("actions/setup-node", WORKFLOW)
+        self.assertNotIn("TAURI_SIGNING", WORKFLOW)
+        self.assertIn("LEES_UPDATER_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}", WORKFLOW)
 
 
 if __name__ == "__main__":
