@@ -56,7 +56,7 @@ class PipelineTests(unittest.TestCase):
 
     def test_build_progress_and_archive_cache_survive_failures(self):
         build = BUILD.read_text("utf-8")
-        self.assertIn("logged_build.py", build)
+        self.assertIn("logged_build.py", WORKFLOW)
         self.assertNotIn("*>> $diagnostics", build)
         self.assertNotIn("*> $diagnostics", build)
         self.assertIn("actions/cache/restore@v5", WORKFLOW)

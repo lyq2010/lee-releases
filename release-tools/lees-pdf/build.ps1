@@ -1,6 +1,7 @@
 #Requires -Version 7.0
 param([Parameter(Mandatory)][string]$SourceRoot,[Parameter(Mandatory)][string]$OutputRoot)
 $ErrorActionPreference='Stop'
+Write-Output 'LEES_BUILD_PHASE:preflight'
 $source=[IO.Path]::GetFullPath($SourceRoot)
 $output=[IO.Path]::GetFullPath($OutputRoot)
 $version=$env:RELEASE_VERSION
@@ -36,12 +37,19 @@ output.write_text(body,encoding="utf-8")
 '@
 $extractFile=Join-Path $env:RUNNER_TEMP ("lees-pdf-extract-notes-$target.py")
 Set-Content -LiteralPath $extractFile -Value $extractNotes -Encoding utf8NoBOM
-$python=if(Get-Command python3 -ErrorAction SilentlyContinue){'python3'}elseif(Get-Command python -ErrorAction SilentlyContinue){'python'}else{throw '缺少 Python'}
+$python=if($IsWindows){'python'}else{'python3'}
+$env:LEES_NATIVE_PYTHON=(Get-Command $python -ErrorAction Stop).Source
 & $python $extractFile $source $version $notesFile
 if($LASTEXITCODE){throw '更新说明提取失败'}
 $public=Get-Content -Raw -Encoding UTF8 (Join-Path $source 'crates/desktop-update/assets/public-config.json') | ConvertFrom-Json
 $expected=Get-Content -Raw -Encoding UTF8 (Join-Path $PSScriptRoot 'public-config.json') | ConvertFrom-Json
 if($public.releasePublicKey -ne $expected.releasePublicKey -or $public.updaterPublicKey -ne $expected.updaterPublicKey){throw '公私仓发行公钥不一致'}
+& $python -m unittest discover -s (Join-Path $PSScriptRoot 'tests') -p 'test_*build*.py'
+if($LASTEXITCODE){throw '构建监控回归失败'}
+if($IsWindows){
+    & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'test-ci-certificate.ps1')
+    if($LASTEXITCODE){throw 'CI 证书回归失败'}
+}
 $null=New-Item -ItemType Directory -Force -Path $output
 $nativePreference=$PSNativeCommandUseErrorActionPreference
 $PSNativeCommandUseErrorActionPreference=$false
@@ -63,17 +71,19 @@ if($IsWindows){
     try {
         if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($certificate.RawData)).ToLowerInvariant() -ne $public.windowsCertificateSha256){throw '公私仓签名身份不一致'}
         $certFile=Join-Path $private 'publisher.cer';[IO.File]::WriteAllBytes($certFile,$certificate.RawData)
-        $null=Import-Certificate -FilePath $certFile -CertStoreLocation Cert:\CurrentUser\Root
-        $null=Import-Certificate -FilePath $certFile -CertStoreLocation Cert:\CurrentUser\TrustedPeople
+        Write-Output 'LEES_BUILD_PHASE:certificate'
+        . (Join-Path $PSScriptRoot 'ci-certificate.ps1')
+        Set-CiCertificateTrust -CertificateFile $certFile -ExpectedSha256 $public.windowsCertificateSha256
     }finally{$certificate.Dispose()}
     $tools=Get-Content -Raw -Encoding UTF8 (Join-Path $source 'native/dependencies/windows-tools.json') | ConvertFrom-Json
-    $diagnostics=Join-Path $cache 'lees-pdf-native-build.log'
     $candidate=Join-Path $cache 'lees-pdf-native-candidate'
     Push-Location $source
     try {
-        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase fetch --timeout 900 -- cargo fetch --locked --target x86_64-pc-windows-msvc
+        Write-Output 'LEES_BUILD_PHASE:fetch'
+        & cargo fetch --locked --target x86_64-pc-windows-msvc
         if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
-        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase tools --timeout 900 -- $python -m pip install cryptography==50.0.2
+        Write-Output 'LEES_BUILD_PHASE:tools'
+        & $python -m pip install cryptography==50.0.2
         if($LASTEXITCODE){throw '签名工具依赖准备失败'}
         $archive=Join-Path $cache 'nsis-3.11.zip'
         Invoke-WebRequest -Uri $tools.nsis.url -OutFile $archive
@@ -83,7 +93,7 @@ if($IsWindows){
         if($compiler.Count -ne 1){throw 'NSIS入口不唯一'}
         $clang=Split-Path (Get-Command clang.exe -ErrorAction Stop).Source -Parent
         if(!(Test-Path -LiteralPath (Join-Path $clang 'libclang.dll'))){throw 'runner缺少现有LLVM libclang'}
-        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase windows -- pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -ClangDirectory $clang -ReleaseNotes $notesFile
+        & pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -ClangDirectory $clang -ReleaseNotes $notesFile
         if($LASTEXITCODE){throw '原生 Windows 构建/验签失败，私有诊断留在runner'}
     }finally{Pop-Location}
     $row=Get-Content -Raw -Encoding UTF8 (Join-Path $candidate 'windows-x86_64.json') | ConvertFrom-Json
@@ -113,15 +123,15 @@ if($IsWindows){
     # The source entry validates the unresolved source/.tools prefix; create the real parent, pass the source-relative path.
     $null=New-Item -ItemType Directory -Force -Path (Join-Path $tools 'native-release')
     $candidate=Join-Path $source '.tools/native-release/candidate'
-    $diagnostics=Join-Path $cache 'lees-pdf-native-build.log'
     Push-Location $source
     try {
-        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase fetch --timeout 900 -- cargo fetch --locked --target aarch64-apple-darwin
+        Write-Output 'LEES_BUILD_PHASE:fetch'
+        & cargo fetch --locked --target aarch64-apple-darwin
         if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
         # macOS updater signing uses the Rust Minisign tool; do not install Python cryptography on the system interpreter.
         if(!(Get-Command cmake -ErrorAction SilentlyContinue)){throw 'runner缺少 cmake'}
         if(!(Get-Command python3 -ErrorAction SilentlyContinue)){throw 'runner缺少 python3'}
-        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase macos -- pwsh -NoProfile -File $entry -OutputRoot $candidate -ReleaseNotes $notesFile
+        & pwsh -NoProfile -File $entry -OutputRoot $candidate -ReleaseNotes $notesFile
         if($LASTEXITCODE){
             throw '原生 macOS 构建/验签失败'
         }
