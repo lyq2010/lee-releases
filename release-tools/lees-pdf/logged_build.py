@@ -12,7 +12,7 @@ import time
 
 from build_activity import process_activity
 
-PHASES = {"preflight", "certificate", "fetch", "tools", "inputs", "application", "engines", "fonts", "licenses", "installer",
+PHASES = {"preflight", "certificate", "fetch", "tools", "nsis", "clang", "inputs", "application", "engines", "fonts", "licenses", "installer",
           "signing", "verification", "metadata"}
 LOG_LIMIT = 64 * 1024 * 1024
 
@@ -33,6 +33,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
     started = activity = last_report = time.monotonic()
     size = units = 0
     errors = set()
+    orchestrator_line = 0
     component = "dependencies"
     messages = queue.Queue(maxsize=64)
     stopped = threading.Event()
@@ -85,7 +86,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
         def report(state, reason="none"):
             print(f"native-build phase={phase} state={state} elapsed={int(time.monotonic()-started)}s "
                   f"quiet={int(time.monotonic()-activity)}s logBytes={size} compiledUnits={units} "
-                  f"component={component} reason={reason} compilerCodes={','.join(sorted(errors)) or 'none'}{resource}",
+                  f"component={component} reason={reason} orchestratorLine={orchestrator_line} compilerCodes={','.join(sorted(errors)) or 'none'}{resource}",
                   flush=True)
 
         try:
@@ -121,6 +122,9 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                     output.flush()
                     line = block.decode("utf-8", errors="replace").strip()
                     errors.update(re.findall(r"\berror\[(E[0-9]{4})\]", line))
+                    location = re.search(r"/release-tools/lees-pdf/build\.ps1:([0-9]+)", line.replace("\\", "/"))
+                    if location:
+                        orchestrator_line = int(location[1])
                     if line.startswith("LEES_BUILD_PHASE:") and line[17:] in PHASES:
                         phase = line[17:]
                         report("running")
