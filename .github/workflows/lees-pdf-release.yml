@@ -162,9 +162,12 @@ jobs:
           LEESPDF_WINDOWS_PFX: ${{ secrets.LEESPDF_WINDOWS_PFX_BASE64 }}
           LEESPDF_WINDOWS_PFX_PASSWORD: ${{ secrets.LEESPDF_WINDOWS_PFX_PASSWORD }}
         run: |
-          if($IsWindows){$env:TEMP='I:/DevCache/Temp';$env:TMP=$env:TEMP}
+          if($IsWindows){
+            $env:TEMP='I:/DevCache/Temp';$env:TMP=$env:TEMP
+            $env:PYTHONPYCACHEPREFIX='I:/DevCache/python-pycache'
+          }
           $python=if($IsWindows){'python'}else{'python3'}
-          $diagnostics=Join-Path $env:RUNNER_TEMP 'lees-pdf-private-build.log'
+          $diagnostics=if($IsWindows){'I:/DevCache/lees-pdf-private-build.log'}else{Join-Path $env:RUNNER_TEMP 'lees-pdf-private-build.log'}
           & $python release-repo/release-tools/lees-pdf/logged_build.py --log $diagnostics --phase preflight -- pwsh -NoProfile -NonInteractive -File release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output
           if($LASTEXITCODE){throw '原生发行构建失败；私有诊断仅保留在 runner'}
       - name: 保留公开依赖归档（失败构建也可复用）

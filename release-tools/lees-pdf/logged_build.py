@@ -15,6 +15,9 @@ from build_activity import process_activity
 PHASES = {"preflight", "certificate", "fetch", "tools", "nsis", "clang", "inputs", "application", "engines", "fonts", "licenses", "installer",
           "signing", "verification", "metadata"}
 LOG_LIMIT = 64 * 1024 * 1024
+PHASE_TIMEOUTS = {"preflight": 300, "certificate": 120, "fetch": 900, "tools": 900,
+                  "nsis": 900, "clang": 120, "inputs": 900, "licenses": 900,
+                  "installer": 900, "signing": 900, "verification": 900, "metadata": 300}
 
 
 def stop(process):
@@ -30,7 +33,7 @@ def stop(process):
 
 
 def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
-    started = activity = last_report = time.monotonic()
+    started = activity = last_report = phase_started = time.monotonic()
     size = units = 0
     errors = set()
     orchestrator_line = 0
@@ -100,8 +103,10 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                     last_report = time.monotonic()
                     report("running")
                 now = time.monotonic()
-                reason = "total-timeout" if now - started >= timeout else "idle-timeout"
-                if now - started >= timeout or now - activity >= quiet_timeout:
+                phase_expired = now - phase_started >= PHASE_TIMEOUTS.get(phase, timeout)
+                reason = ("total-timeout" if now - started >= timeout else
+                          "phase-timeout" if phase_expired else "idle-timeout")
+                if now - started >= timeout or phase_expired or now - activity >= quiet_timeout:
                     report("timeout", reason)
                     stop(process)
                     return 124
@@ -126,6 +131,8 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                     if location:
                         orchestrator_line = int(location[1])
                     if line.startswith("LEES_BUILD_PHASE:") and line[17:] in PHASES:
+                        if phase != line[17:]:
+                            phase_started = time.monotonic()
                         phase = line[17:]
                         report("running")
                     if line.startswith("Compiling ") or line.startswith("Finished "):

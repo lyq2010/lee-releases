@@ -78,5 +78,20 @@ class LoggedBuildTests(unittest.TestCase):
         self.assertNotIn("private source details", progress)
 
 
+    def test_public_orchestrator_location_without_private_output(self):
+        code, _, progress = self.invoke(
+            "print(r'C:\\runner\\release-tools\\lees-pdf\\build.ps1:93 private details'); raise SystemExit(1)")
+        self.assertEqual(code, 1)
+        self.assertIn("orchestratorLine=93", progress)
+        self.assertNotIn("private details", progress)
+        self.assertNotIn("runner", progress)
+
+    def test_repeated_phase_and_output_do_not_defeat_phase_deadline(self):
+        with mock.patch.dict(BUILD.PHASE_TIMEOUTS, {"certificate": 0.15}):
+            code, _, progress = self.invoke(
+                "import time\nwhile True: print('LEES_BUILD_PHASE:certificate'); time.sleep(.01)")
+        self.assertEqual(code, 124)
+        self.assertIn("reason=phase-timeout", progress)
+
 if __name__ == "__main__":
     unittest.main()
