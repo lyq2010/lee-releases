@@ -22,7 +22,7 @@ if((Get-Content -Raw -Encoding UTF8 (Join-Path $source 'package.json') | Convert
 $notesFile=Join-Path $env:RUNNER_TEMP ("lees-pdf-release-notes-$target.txt")
 $extractNotes=@'
 import pathlib,re,sys
-source,version,output=map(pathlib.Path,sys.argv[1:4])
+source=pathlib.Path(sys.argv[1]); version=sys.argv[2]; output=pathlib.Path(sys.argv[3])
 text=source.joinpath("CHANGELOG.md").read_text(encoding="utf-8").lstrip("\ufeff").replace("\r\n","\n").replace("\r","\n")
 headings=[(m.start(),m.group(1)) for m in re.finditer(r"^## (.+)$",text,re.M)]
 matching=[item for item in headings if item[1]==version or re.fullmatch(re.escape(version)+r" \(\d{4}-\d{2}-\d{2}\)",item[1])]
