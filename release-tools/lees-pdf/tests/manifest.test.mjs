@@ -16,9 +16,9 @@ function fixture(){
  const {privateKey,publicKey}=generateKeyPairSync('ed25519');
  const config={keyId:'local-test-key',releasePublicKey:publicKey.export({format:'der',type:'spki'}).subarray(-32).toString('base64'),windowsCertificateSha256:'c'.repeat(64)};
  for(const target of ['darwin-aarch64','windows-x86_64']){
-  const updater=`lees-pdf-1.0.1-${target}.bin`,material=`lees-pdf-1.0.1-${target}-NOTICES.txt`;
+  const updater=`lees-pdf-1.0.1-${target}${target.startsWith('darwin')?'.app.tar.gz':'-setup.exe'}`,material=`lees-pdf-1.0.1-${target}-NOTICES.txt`;
   writeFileSync(join(root,updater),'synthetic installer');writeFileSync(join(root,material),'synthetic notices');
-  writeFileSync(join(root,`${target}.json`),JSON.stringify({target,version:'1.0.1',sourceRevision:'a'.repeat(40),bundleId:'app.lees.pdf',updater,installer:updater,updaterSignature:'synthetic updater signature',runtimeManifestSha256:'b'.repeat(64),releaseNotes:'## 1.0.1 (2026-10-15)\n\n- 更新流程改进。\n- 设置修复。\n',signerCertificateSha256:target.startsWith('windows')?config.windowsCertificateSha256:null,materials:[material]}));
+  writeFileSync(join(root,`${target}.json`),JSON.stringify({native:true,target,version:'1.0.1',sourceRevision:'a'.repeat(40),bundleId:'app.lees.pdf',updater,installer:updater,updaterSignature:'synthetic updater signature',runtimeManifestSha256:'b'.repeat(64),releaseNotes:'## 1.0.1 (2026-10-15)\n\n- 更新流程改进。\n- 设置修复。\n',signerCertificateSha256:target.startsWith('windows')?config.windowsCertificateSha256:null,materials:[material]}));
   writeFileSync(join(root,`${target}-public-config.json`),JSON.stringify(config));
  }
  writeFileSync(join(root,'private-source.ts'),'private sentinel; must never be uploaded');
@@ -41,6 +41,7 @@ test('assemble hashes all existing packages and signs metadata; upload only newl
  assert.ok(verify(null,bytes,f.publicKey,Buffer.from(outer.release.signatureBase64,'base64')));
  const payload=JSON.parse(bytes);
  for(const platform of Object.values(payload.platforms)){
+  assert.equal(platform.protocol,2);
   const file=join(f.root,platform.updaterArtifact.path.split('/').at(-1));
   assert.equal(createHash('sha256').update(readFileSync(file)).digest('hex'),platform.updaterArtifact.sha256);
  }
@@ -69,4 +70,12 @@ test('different platform changelogs cannot be published together',async()=>{
  const f=fixture(),path=join(f.root,'windows-x86_64.json'),row=JSON.parse(readFileSync(path));
  row.releaseNotes='## 1.0.1\n\n- Different changes.\n';writeFileSync(path,JSON.stringify(row));
  await assert.rejects(assemble(f),/发行资产或签名身份不一致/);
+});
+
+test('publisher manifest is accepted by the real Rust native client',
+ {skip:!process.env.LEES_NATIVE_MANIFEST_VERIFIER},async()=>{
+ const f=fixture();await assemble(f);
+ const actual=JSON.parse(childProcess.execFileSync(process.env.LEES_NATIVE_MANIFEST_VERIFIER,
+  [join(f.root,'release-manifest.json'),'https://cos.example/',join(f.root,'darwin-aarch64-public-config.json')],{encoding:'utf8'}));
+ assert.deepEqual(actual,{native:true,version:'1.0.1'});
 });

@@ -5,9 +5,9 @@ $source=[IO.Path]::GetFullPath($SourceRoot)
 $output=[IO.Path]::GetFullPath($OutputRoot)
 $version=$env:RELEASE_VERSION
 $target=$env:RELEASE_TARGET
+if($env:SOURCE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or $env:RELEASE_VERSION -ne $env:SOURCE_TAG.Substring(1)){throw '源码Tag或版本无效'}
 if ($target -notin @('darwin-aarch64','windows-x86_64') -or $version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {throw '发行输入无效'}
 if (($IsMacOS -and $target -ne 'darwin-aarch64') -or ($IsWindows -and $target -ne 'windows-x86_64') -or (!$IsMacOS -and !$IsWindows)) {throw '构建平台不匹配'}
-if($env:SOURCE_TAG -notmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or $env:RELEASE_VERSION -ne $env:SOURCE_TAG.Substring(1)){throw '源码Tag或版本无效'}
 # Match the shared mirror convention: a bare COS hostname is an HTTPS base.
 $cosBase=([string]$env:LEESPDF_COS_BASE_URL).Trim().TrimEnd('/')
 if(!$cosBase.Contains('://')){$cosBase='https://'+$cosBase}
@@ -71,9 +71,9 @@ if($IsWindows){
     $candidate=Join-Path $cache 'lees-pdf-native-candidate'
     Push-Location $source
     try {
-        & cargo fetch --locked *> $diagnostics
+        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase fetch --timeout 900 -- cargo fetch --locked --target x86_64-pc-windows-msvc
         if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
-        & python -m pip install cryptography==50.0.2 *>> $diagnostics
+        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase tools --timeout 900 -- $python -m pip install cryptography==50.0.2
         if($LASTEXITCODE){throw '签名工具依赖准备失败'}
         $archive=Join-Path $cache 'nsis-3.11.zip'
         Invoke-WebRequest -Uri $tools.nsis.url -OutFile $archive
@@ -83,7 +83,7 @@ if($IsWindows){
         if($compiler.Count -ne 1){throw 'NSIS入口不唯一'}
         $clang=Split-Path (Get-Command clang.exe -ErrorAction Stop).Source -Parent
         if(!(Test-Path -LiteralPath (Join-Path $clang 'libclang.dll'))){throw 'runner缺少现有LLVM libclang'}
-        & pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -ClangDirectory $clang -ReleaseNotes $notesFile *>> $diagnostics
+        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase windows -- pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler[0].FullName -ClangDirectory $clang -ReleaseNotes $notesFile
         if($LASTEXITCODE){throw '原生 Windows 构建/验签失败，私有诊断留在runner'}
     }finally{Pop-Location}
     $row=Get-Content -Raw -Encoding UTF8 (Join-Path $candidate 'windows-x86_64.json') | ConvertFrom-Json
@@ -104,7 +104,7 @@ if($IsWindows){
     $null=New-Item -ItemType Directory -Force -Path $cache,$tools
     if(Test-Path -LiteralPath (Join-Path $source '.tools')){throw '源码检出含未知依赖目录'}
     $null=New-Item -ItemType SymbolicLink -Path (Join-Path $source '.tools') -Target $tools
-    $env:CARGO_HOME=Join-Path $cache 'cargo'
+    if(!$env:CARGO_HOME){$env:CARGO_HOME=Join-Path $cache 'cargo'}
     $env:CARGO_TARGET_DIR=Join-Path $cache 'cargo-target'
     $env:CARGO_INCREMENTAL='0'
     $env:MACOSX_DEPLOYMENT_TARGET='26.0'
@@ -116,17 +116,13 @@ if($IsWindows){
     $diagnostics=Join-Path $cache 'lees-pdf-native-build.log'
     Push-Location $source
     try {
-        & cargo fetch --locked *> $diagnostics
+        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase fetch --timeout 900 -- cargo fetch --locked --target aarch64-apple-darwin
         if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
         # macOS updater signing uses the Rust Minisign tool; do not install Python cryptography on the system interpreter.
         if(!(Get-Command cmake -ErrorAction SilentlyContinue)){throw 'runner缺少 cmake'}
         if(!(Get-Command python3 -ErrorAction SilentlyContinue)){throw 'runner缺少 python3'}
-        & pwsh -NoProfile -File $entry -OutputRoot $candidate -ReleaseNotes $notesFile *>> $diagnostics
+        & $python (Join-Path $source 'scripts/release/logged_build.py') --log $diagnostics --phase macos -- pwsh -NoProfile -File $entry -OutputRoot $candidate -ReleaseNotes $notesFile
         if($LASTEXITCODE){
-            if(Test-Path -LiteralPath $diagnostics){
-                Write-Output '--- macOS build diagnostics (tail) ---'
-                Get-Content -LiteralPath $diagnostics -Tail 120
-            }
             throw '原生 macOS 构建/验签失败'
         }
     }finally{Pop-Location}

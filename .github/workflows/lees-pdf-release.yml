@@ -12,7 +12,7 @@ on:
         default: all
         options: [all, windows-x86_64, darwin-aarch64]
       promote:
-        description: 复用已有 Draft，补齐镜像后重试晋升；正常构建会直接发布
+        description: 公布已验收 Draft；重新核对并补齐双源后晋升更新指针
         type: boolean
         default: false
 permissions:
@@ -75,6 +75,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.validate.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 210
     environment: lees-pdf-release
     env:
       PYTHONUTF8: '1'
@@ -140,7 +141,8 @@ jobs:
           brew list cmake >/dev/null 2>&1 || brew install cmake
           cmake --version
           cargo --version
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: cargo-cache
         with:
           path: ${{ env.CARGO_HOME }}/registry/cache/index.crates.io-*/*.crate
           key: lees-pdf-native-crates-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('private-source/Cargo.lock') }}
@@ -161,6 +163,12 @@ jobs:
           LEESPDF_WINDOWS_PFX_PASSWORD: ${{ secrets.LEESPDF_WINDOWS_PFX_PASSWORD }}
         run: |
           & release-repo/release-tools/lees-pdf/build.ps1 -SourceRoot private-source -OutputRoot public-output
+      - name: 保留公开依赖归档（失败构建也可复用）
+        if: ${{ always() && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CARGO_HOME }}/registry/cache/index.crates.io-*/*.crate
+          key: lees-pdf-native-crates-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('private-source/Cargo.lock') }}
       - name: 将公开构建资产上传同一 Draft
         shell: pwsh
         env:
@@ -241,7 +249,7 @@ jobs:
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
         run: gh release upload "$PUBLIC_TAG" public-output/readiness-${{ matrix.source }}.json --repo lyq2010/lee-releases --clobber
   promote:
-    if: ${{ always() && needs.validate.result == 'success' && ((!inputs.promote && needs.mirror.result == 'success') || (inputs.promote && needs.mirror.result == 'skipped')) }}
+    if: ${{ always() && inputs.promote && needs.validate.result == 'success' && needs.mirror.result == 'skipped' }}
     needs: [validate, mirror]
     runs-on: ubuntu-latest
     environment: lees-pdf-release

@@ -27,9 +27,9 @@ function artifact(name,signature){
 const platforms={};
 for(const [index,row] of rows.entries()){
  const target=targets[index];
- if(row.version!==version||row.target!==target||row.sourceRevision!==rows[0].sourceRevision||!/^[a-f0-9]{40}$/.test(row.sourceRevision)||row.bundleId!=='app.lees.pdf'||!row.updaterSignature||!/^[a-f0-9]{64}$/.test(row.runtimeManifestSha256))fail();
+ if(row.native!==true||row.version!==version||row.target!==target||row.sourceRevision!==rows[0].sourceRevision||!/^[a-f0-9]{40}$/.test(row.sourceRevision)||row.bundleId!=='app.lees.pdf'||!row.updaterSignature||!/^[a-f0-9]{64}$/.test(row.runtimeManifestSha256))fail();
  if(target==='windows-x86_64'&&row.signerCertificateSha256!==config.windowsCertificateSha256)fail();
- platforms[target]={minOs:target.startsWith('darwin')?'26.0':'10.0.26100',arch:target.split('-')[1],bundleId:row.bundleId,protocol:1,schema:1,runtimeManifestSha256:row.runtimeManifestSha256,signerCertificateSha256:row.signerCertificateSha256??null,updaterArtifact:artifact(row.updater,row.updaterSignature),installerArtifact:artifact(row.installer,null)};
+ platforms[target]={minOs:target.startsWith('darwin')?'26.0':'10.0.26100',arch:target.split('-')[1],bundleId:row.bundleId,protocol:2,schema:1,runtimeManifestSha256:row.runtimeManifestSha256,signerCertificateSha256:row.signerCertificateSha256??null,updaterArtifact:artifact(row.updater,row.updaterSignature),installerArtifact:artifact(row.installer,null)};
  for(const name of row.materials)artifact(name,null);
 }
 const publishedAt=new Date().toISOString().replace(/\.\d{3}Z$/,'Z');
