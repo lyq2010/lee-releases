@@ -20,7 +20,24 @@ if((& git -C $source rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revisi
 if($LASTEXITCODE){throw '源码Tag不在主线'}
 if((Get-Content -Raw -Encoding UTF8 (Join-Path $source 'package.json') | ConvertFrom-Json).version -ne $env:RELEASE_VERSION){throw '单一产品版本不符'}
 $notesFile=Join-Path $env:RUNNER_TEMP ("lees-pdf-release-notes-$target.txt")
-& node (Join-Path $PSScriptRoot 'release-notes.mjs') $source $version $notesFile
+$extractNotes=@'
+import pathlib,re,sys
+source,version,output=map(pathlib.Path,sys.argv[1:4])
+text=source.joinpath("CHANGELOG.md").read_text(encoding="utf-8").lstrip("\ufeff").replace("\r\n","\n").replace("\r","\n")
+headings=[(m.start(),m.group(1)) for m in re.finditer(r"^## (.+)$",text,re.M)]
+matching=[item for item in headings if item[1]==version or re.fullmatch(re.escape(version)+r" \(\d{4}-\d{2}-\d{2}\)",item[1])]
+if len(matching)!=1: raise SystemExit("目标版本更新说明缺失或无效")
+index=headings.index(matching[0])
+end=headings[index+1][0] if index+1<len(headings) else len(text)
+body=text[matching[0][0]:end].strip()+"\n"
+if not re.match(rf"^## {re.escape(version)}(?: \(\d{{4}}-\d{{2}}-\d{{2}}\))?$",body.splitlines()[0]) or not re.search(r"^[-*] \S",body,re.M) or len(re.findall(r"^## ",body,re.M))!=1 or len(body.encode())>16000:
+    raise SystemExit("目标版本更新说明缺失或无效")
+output.write_text(body,encoding="utf-8")
+'@
+$extractFile=Join-Path $env:RUNNER_TEMP ("lees-pdf-extract-notes-$target.py")
+Set-Content -LiteralPath $extractFile -Value $extractNotes -Encoding utf8NoBOM
+$python=if(Get-Command python3 -ErrorAction SilentlyContinue){'python3'}elseif(Get-Command python -ErrorAction SilentlyContinue){'python'}else{throw '缺少 Python'}
+& $python $extractFile $source $version $notesFile
 if($LASTEXITCODE){throw '更新说明提取失败'}
 $public=Get-Content -Raw -Encoding UTF8 (Join-Path $source 'crates/desktop-update/assets/public-config.json') | ConvertFrom-Json
 $expected=Get-Content -Raw -Encoding UTF8 (Join-Path $PSScriptRoot 'public-config.json') | ConvertFrom-Json
@@ -99,9 +116,9 @@ if($IsWindows){
     try {
         & cargo fetch --locked *> $diagnostics
         if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
-        & python3 -m pip install --user cryptography==50.0.2 *>> $diagnostics
-        if($LASTEXITCODE){throw '签名工具依赖准备失败'}
+        # macOS updater signing uses the Rust Minisign tool; do not install Python cryptography on the system interpreter.
         if(!(Get-Command cmake -ErrorAction SilentlyContinue)){throw 'runner缺少 cmake'}
+        if(!(Get-Command python3 -ErrorAction SilentlyContinue)){throw 'runner缺少 python3'}
         & pwsh -NoProfile -File $entry -OutputRoot $candidate -ReleaseNotes $notesFile *>> $diagnostics
         if($LASTEXITCODE){throw '原生 macOS 构建/验签失败，私有诊断留在runner'}
     }finally{Pop-Location}
