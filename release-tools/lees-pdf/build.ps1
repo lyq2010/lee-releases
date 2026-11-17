@@ -120,7 +120,13 @@ if($IsWindows){
         if(!(Get-Command cmake -ErrorAction SilentlyContinue)){throw 'runner缺少 cmake'}
         if(!(Get-Command python3 -ErrorAction SilentlyContinue)){throw 'runner缺少 python3'}
         & pwsh -NoProfile -File $entry -OutputRoot $candidate -ReleaseNotes $notesFile *>> $diagnostics
-        if($LASTEXITCODE){throw '原生 macOS 构建/验签失败，私有诊断留在runner'}
+        if($LASTEXITCODE){
+            if(Test-Path -LiteralPath $diagnostics){
+                Write-Output '--- macOS build diagnostics (tail) ---'
+                Get-Content -LiteralPath $diagnostics -Tail 120
+            }
+            throw '原生 macOS 构建/验签失败'
+        }
     }finally{Pop-Location}
     $row=Get-Content -Raw -Encoding UTF8 (Join-Path $candidate 'darwin-aarch64.json') | ConvertFrom-Json
     if(!$row.native -or $row.sourceDirty -or $row.sourceRevision -ne $revision -or $row.version -ne $env:RELEASE_VERSION){throw '发行源码或生产身份不符'}
