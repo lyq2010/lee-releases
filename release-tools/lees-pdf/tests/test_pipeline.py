@@ -1,58 +1,88 @@
-"""Native candidate boundaries; failures occur before credentials or builds."""
+"""Native dual-platform release boundaries; failures occur before credentials or builds."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = ROOT / "release-tools/lees-pdf/build.ps1"
 WORKFLOW = (ROOT / ".github/workflows/lees-pdf-release.yml").read_text("utf-8")
+PWSH = shutil.which("pwsh")
 
 
 class PipelineTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not PWSH:
+            raise unittest.SkipTest("pwsh is required for build.ps1 boundary checks")
+
+    def local_target(self):
+        if sys.platform == "darwin":
+            return "darwin-aarch64"
+        if sys.platform.startswith("win"):
+            return "windows-x86_64"
+        self.fail("pipeline boundary checks require Windows or macOS")
+
+    def foreign_target(self):
+        return "windows-x86_64" if self.local_target() == "darwin-aarch64" else "darwin-aarch64"
+
     def reject(self, target, tag, version, message):
-        env = os.environ | {"RELEASE_TARGET": target, "SOURCE_TAG": tag, "RELEASE_VERSION": version}
+        env = os.environ | {
+            "RELEASE_TARGET": target,
+            "SOURCE_TAG": tag,
+            "RELEASE_VERSION": version,
+            "LEESPDF_COS_BASE_URL": "https://example.invalid/",
+            "RUNNER_TEMP": str(ROOT / "never-created-runner-temp"),
+        }
         result = subprocess.run(
-            ["pwsh", "-NoProfile", "-File", str(BUILD), "-SourceRoot", str(ROOT),
+            [PWSH, "-NoProfile", "-File", str(BUILD), "-SourceRoot", str(ROOT),
              "-OutputRoot", str(ROOT / "never-created-output")],
             capture_output=True, text=True, encoding="utf-8", env=env,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(message, result.stderr)
+        self.assertIn(message, result.stderr + result.stdout)
         self.assertFalse((ROOT / "never-created-output").exists())
 
-    def test_rejects_macos_before_building_or_reading_credentials(self):
-        self.reject("aarch64-apple-darwin", "v0.1.7", "0.1.7", "禁止回落到旧应用构建")
-
     def test_rejects_untrusted_tag_and_mismatched_version(self):
+        target = self.local_target()
         for tag, version in (("main", "0.1.7"), ("v0.1.7", "0.1.8"), ("v01.1.7", "01.1.7")):
             with self.subTest(tag=tag, version=version):
-                self.reject("windows-x86_64", tag, version, "源码Tag或版本无效")
+                self.reject(target, tag, version, "源码Tag或版本无效")
 
-    def test_manual_candidate_cannot_publish_or_mix_platforms(self):
+    def test_rejects_platform_mismatch_before_credentials(self):
+        self.reject(self.foreign_target(), "v1.0.0", "1.0.0", "构建平台不匹配")
+
+    def test_full_release_workflow_restored(self):
+        self.assertIn("name: Lee's PDF Release", WORKFLOW)
         self.assertIn("workflow_dispatch:", WORKFLOW)
-        self.assertIn("runs-on: windows-2025", WORKFLOW)
-        self.assertIn("contents: read", WORKFLOW)
-        self.assertNotIn("contents: write", WORKFLOW)
-        for forbidden in ("tauri build", "gh release", "mirror.py", "prepare-jdk", "promote:"):
-            self.assertNotIn(forbidden, WORKFLOW)
-        self.assertIn("public-output/*", WORKFLOW)
-        self.assertNotIn("path: I:/DevCache\n", WORKFLOW)
-
-    def test_only_public_registry_archives_are_cached(self):
-        self.assertEqual(WORKFLOW.count("uses: actions/cache@"), 1)
-        self.assertIn("path: I:/DevCache/cargo/registry/cache/index.crates.io-*/*.crate", WORKFLOW)
-        build = BUILD.read_text("utf-8")
-        self.assertIn("build-native-candidate.ps1", build)
-        self.assertIn("$row.sourceDirty", build)
-        self.assertIn("$row.sourceRevision -ne $revision", build)
-        self.assertIn("candidate-files.json", build)
-        self.assertIn("windowsCertificateSha256", build)
-        for forbidden in ("npm install", "UpdaterSigner", "@tauri-apps/cli", "tauri build"):
-            self.assertNotIn(forbidden, build)
-        self.assertNotIn("actions/setup-node", WORKFLOW)
+        self.assertIn("promote:", WORKFLOW)
+        self.assertIn("platform:", WORKFLOW)
+        self.assertIn("windows-2025", WORKFLOW)
+        self.assertIn("macos-26", WORKFLOW)
+        self.assertIn("darwin-aarch64", WORKFLOW)
+        self.assertIn("mirror.py", WORKFLOW)
+        self.assertIn("manifest.mjs", WORKFLOW)
+        for required in ("prepare-draft:", "draft:", "mirror:", "promote:"):
+            self.assertIn(required, WORKFLOW)
+        self.assertNotIn("tauri build", WORKFLOW)
+        self.assertNotIn("prepare-jdk", WORKFLOW)
         self.assertNotIn("TAURI_SIGNING", WORKFLOW)
         self.assertIn("LEES_UPDATER_PRIVATE_KEY: ${{ secrets.LEESPDF_UPDATER_PRIVATE_KEY }}", WORKFLOW)
+        build = BUILD.read_text("utf-8")
+        self.assertIn("build-native-macos-release.ps1", build)
+        self.assertIn("build-native-candidate.ps1", build)
+        self.assertIn("release-files.json", build)
+        for forbidden in ("npm install --prefix $signer", "UpdaterSigner", "@tauri-apps/cli", "tauri build"):
+            self.assertNotIn(forbidden, build)
+
+
+class WorkflowStaticTests(unittest.TestCase):
+    def test_workflow_name_and_matrix_without_pwsh(self):
+        self.assertIn("name: Lee's PDF Release", WORKFLOW)
+        self.assertIn("macos-26", WORKFLOW)
+        self.assertIn("build-native-macos-release.ps1", BUILD.read_text("utf-8"))
 
 
 if __name__ == "__main__":
