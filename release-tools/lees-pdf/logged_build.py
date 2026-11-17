@@ -37,6 +37,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
     size = units = 0
     errors = set()
     orchestrator_line = 0
+    compiler_jobs = 0
     component = "dependencies"
     messages = queue.Queue(maxsize=64)
     stopped = threading.Event()
@@ -89,7 +90,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
         def report(state, reason="none"):
             print(f"native-build phase={phase} state={state} elapsed={int(time.monotonic()-started)}s "
                   f"quiet={int(time.monotonic()-activity)}s logBytes={size} compiledUnits={units} "
-                  f"component={component} reason={reason} orchestratorLine={orchestrator_line} compilerCodes={','.join(sorted(errors)) or 'none'}{resource}",
+                  f"component={component} compilerJobs={compiler_jobs} reason={reason} orchestratorLine={orchestrator_line} compilerCodes={','.join(sorted(errors)) or 'none'}{resource}",
                   flush=True)
 
         try:
@@ -126,6 +127,9 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                     output.write(block)
                     output.flush()
                     line = block.decode("utf-8", errors="replace").strip()
+                    if re.fullmatch(r"LEES_BUILD_JOBS:[1-4]", line):
+                        compiler_jobs = int(line[-1])
+                        report("running")
                     errors.update(re.findall(r"\berror\[(E[0-9]{4})\]", line))
                     location = re.search(r"/release-tools/lees-pdf/build\.ps1:([0-9]+)", line.replace("\\", "/"))
                     if location:

@@ -93,5 +93,12 @@ class LoggedBuildTests(unittest.TestCase):
         self.assertEqual(code, 124)
         self.assertIn("reason=phase-timeout", progress)
 
+    def test_only_bounded_compiler_budget_is_public(self):
+        code, _, progress = self.invoke("print('LEES_BUILD_JOBS:4'); print('LEES_BUILD_JOBS:99 private')")
+        self.assertEqual(code, 0)
+        self.assertIn("compilerJobs=4", progress)
+        self.assertNotIn("99", progress)
+        self.assertNotIn("private", progress)
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,7 +77,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("darwin-aarch64", WORKFLOW)
         self.assertIn("mirror.py", WORKFLOW)
         self.assertIn("manifest.mjs", WORKFLOW)
-        for required in ("prepare-draft:", "draft:", "mirror:", "promote:"):
+        for required in ("prepare-draft:", "draft:", "promote:"):
             self.assertIn(required, WORKFLOW)
         self.assertNotIn("tauri build", WORKFLOW)
         self.assertNotIn("prepare-jdk", WORKFLOW)

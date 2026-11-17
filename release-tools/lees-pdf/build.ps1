@@ -19,6 +19,9 @@ $revision=(& git -C $source rev-parse HEAD).Trim()
 if((& git -C $source rev-parse "$($env:SOURCE_TAG)^{commit}").Trim() -ne $revision){throw '源码Tag与检出不符'}
 & git -C $source merge-base --is-ancestor $revision origin/main
 if($LASTEXITCODE){throw '源码Tag不在主线'}
+$sourceChanges=& git -C $source status --porcelain
+if($LASTEXITCODE){throw '源码清洁检查失败'}
+if($sourceChanges){throw '源码工作区不干净；未开始构建'}
 if((Get-Content -Raw -Encoding UTF8 (Join-Path $source 'package.json') | ConvertFrom-Json).version -ne $env:RELEASE_VERSION){throw '单一产品版本不符'}
 $notesFile=Join-Path $env:RUNNER_TEMP ("lees-pdf-release-notes-$target.txt")
 $extractNotes=@'
@@ -116,6 +119,8 @@ if($IsWindows){
     $null=New-Item -ItemType Directory -Force -Path $cache,$tools
     if(Test-Path -LiteralPath (Join-Path $source '.tools')){throw '源码检出含未知依赖目录'}
     $null=New-Item -ItemType SymbolicLink -Path (Join-Path $source '.tools') -Target $tools
+    & git -C $source check-ignore --quiet .tools
+    if($LASTEXITCODE){throw '内部依赖符号链接未被Git忽略；未开始构建'}
     if(!$env:CARGO_HOME){$env:CARGO_HOME=Join-Path $cache 'cargo'}
     $env:CARGO_TARGET_DIR=Join-Path $cache 'cargo-target'
     $env:CARGO_INCREMENTAL='0'
@@ -127,9 +132,6 @@ if($IsWindows){
     $candidate=Join-Path $source '.tools/native-release/candidate'
     Push-Location $source
     try {
-        Write-Output 'LEES_BUILD_PHASE:fetch'
-        & cargo fetch --locked --target aarch64-apple-darwin
-        if($LASTEXITCODE){throw '原生锁定依赖准备失败，私有诊断留在runner'}
         # macOS updater signing uses the Rust Minisign tool; do not install Python cryptography on the system interpreter.
         if(!(Get-Command cmake -ErrorAction SilentlyContinue)){throw 'runner缺少 cmake'}
         if(!(Get-Command python3 -ErrorAction SilentlyContinue)){throw 'runner缺少 python3'}
