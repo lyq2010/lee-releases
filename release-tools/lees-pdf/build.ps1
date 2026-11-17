@@ -110,10 +110,9 @@ if($IsWindows){
     $env:MACOSX_DEPLOYMENT_TARGET='26.0'
     $env:PYTHONUTF8='1'
     $null=New-Item -ItemType Directory -Force -Path $env:CARGO_HOME,$env:CARGO_TARGET_DIR
-    # Create under the real tools directory; .tools is only a symlink for source-relative scripts.
-    $nativeRelease=Join-Path $tools 'native-release'
-    $null=New-Item -ItemType Directory -Force -Path $nativeRelease
-    $candidate=Join-Path $nativeRelease 'candidate'
+    # The source entry validates the unresolved source/.tools prefix; create the real parent, pass the source-relative path.
+    $null=New-Item -ItemType Directory -Force -Path (Join-Path $tools 'native-release')
+    $candidate=Join-Path $source '.tools/native-release/candidate'
     $diagnostics=Join-Path $cache 'lees-pdf-native-build.log'
     Push-Location $source
     try {
