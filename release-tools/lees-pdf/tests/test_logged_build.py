@@ -71,6 +71,18 @@ class LoggedBuildTests(unittest.TestCase):
         self.assertEqual(code, 124)
         self.assertIn("reason=total-timeout", progress)
 
+    def test_input_failure_reports_only_known_frames_and_categories(self):
+        code, log, progress = self.invoke(
+            'print("LEES_BUILD_PHASE:inputs"); '
+            'print(\'  File "/private/path/prepare-native-assets.py", line 23, in fetch\'); '
+            'print("urllib.error.HTTPError: HTTP Error 429: private-title"); raise SystemExit(1)'
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("private-title", log)
+        self.assertIn("trace=prepare-native-assets.py:23 categories=HTTPError http=429", progress)
+        self.assertNotIn("private-title", progress)
+        self.assertNotIn("/private/path", progress)
+
     def test_compiler_failure_exposes_only_error_codes(self):
         code, _, progress = self.invoke("print('error[E0308]: private source details'); raise SystemExit(1)")
         self.assertEqual(code, 1)

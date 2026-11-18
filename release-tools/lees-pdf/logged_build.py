@@ -19,6 +19,10 @@ PHASE_TIMEOUTS = {"preflight": 300, "certificate": 120, "fetch": 900, "tools": 9
                   "nsis": 900, "clang": 120, "inputs": 900, "licenses": 900,
                   "installer": 900, "signing": 900, "verification": 900, "metadata": 300}
 
+INPUT_TRACE = re.compile(r'^File "[^"]*[/\\](prepare-native-(?:macos|windows|assets|reader)\.py)", line ([0-9]{1,4}),')
+INPUT_ERROR = re.compile(r'^(?:[A-Za-z_]+\.)*(HTTPError|URLError|TimeoutError|SSLError|IncompleteRead|RemoteDisconnected|CalledProcessError|FileNotFoundError|ValueError|BadZipFile|PermissionError|OSError):')
+HTTP_STATUS = re.compile(r'HTTP Error ([45][0-9]{2})\b')
+
 
 def stop(process):
     if os.name == "nt":
@@ -37,6 +41,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
     size = units = 0
     errors = set()
     orchestrator_line = 0
+    input_trace, input_errors, http_codes = set(), set(), set()
     compiler_jobs = 0
     component = "dependencies"
     messages = queue.Queue(maxsize=64)
@@ -139,6 +144,13 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                             phase_started = time.monotonic()
                         phase = line[17:]
                         report("running")
+                    if phase == "inputs":
+                        if frame := INPUT_TRACE.match(line):
+                            input_trace.add(f"{frame[1]}:{frame[2]}")
+                        if failure := INPUT_ERROR.match(line):
+                            input_errors.add(failure[1])
+                        if status := HTTP_STATUS.search(line):
+                            http_codes.add(status[1])
                     if line.startswith("Compiling ") or line.startswith("Finished "):
                         units += 1
                         name = line.split()[1] if line.startswith("Compiling ") else ""
@@ -147,6 +159,11 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                                      "lees-scan-engine":"scan"}.get(name, "dependencies")
             code = process.wait(timeout=max(1, timeout - (time.monotonic() - started)))
             report("success" if code == 0 else f"failed-{code}")
+            if code != 0 and phase == "inputs":
+                print("native-input-diagnostics "
+                      f"trace={','.join(sorted(input_trace)) or 'none'} "
+                      f"categories={','.join(sorted(input_errors)) or 'none'} "
+                      f"http={','.join(sorted(http_codes)) or 'none'}", flush=True)
             return code
         except BaseException:
             stop(process)
