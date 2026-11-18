@@ -148,6 +148,23 @@ jobs:
           key: lees-pdf-native-crates-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('private-source/Cargo.lock') }}
           restore-keys: |
             lees-pdf-native-crates-${{ runner.os }}-${{ runner.arch }}-
+      - name: 从已发布包补齐固定 ONNX Runtime 输入
+        if: ${{ inputs.tag == 'v1.0.1' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $scratch=Join-Path $env:RUNNER_TEMP 'lees-pdf-onnx-recovery'
+          if($IsWindows){
+            $env:TEMP='I:/DevCache/Temp';$env:TMP=$env:TEMP
+            $scratch='I:/DevCache/lees-pdf-onnx-recovery'
+            $seven=Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+            python release-repo/release-tools/lees-pdf/restore_onnx_input.py --source private-source --tools 'I:/DevCache/tools' --target $env:RELEASE_TARGET --scratch $scratch --seven-zip $seven
+          }else{
+            $tools=Join-Path $env:RUNNER_TEMP 'lees-pdf-native-macos/tools'
+            python3 release-repo/release-tools/lees-pdf/restore_onnx_input.py --source private-source --tools $tools --target $env:RELEASE_TARGET --scratch $scratch
+          }
+          if($LASTEXITCODE){throw '固定 ONNX Runtime 输入恢复失败'}
       - name: 构建与核对最终包（私有诊断留在隔离 runner）
         shell: pwsh
         env:
