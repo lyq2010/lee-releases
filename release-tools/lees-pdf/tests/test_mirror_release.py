@@ -56,12 +56,12 @@ class ReleaseTests(unittest.TestCase):
         self.writes.append((source, key))
         self.store[mirror.base(source) + key] = file.read_bytes()
 
-    def run_release(self, put=None, prune=None):
+    def run_release(self, put=None, prune=None, *, retain_previous=False):
         with patch.object(mirror, 'public_identity', side_effect=self.digest), \
              patch.object(mirror, 'put', side_effect=put or self.put), \
              patch.object(mirror, 'prune', side_effect=prune or (lambda *args: self.deleted.append(args))), \
              patch.object(self.release, 'check_previous'):
-            self.release.publish()
+            self.release.publish(retain_previous=retain_previous)
 
     def test_both_sources_verified_before_pointers_and_cleanup(self):
         def checked_put(source, key, file, mutable=False):
@@ -75,6 +75,14 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(self.reads.count(mirror.base(source) + self.asset['path']), 2)
             readiness = json.loads((self.root / f'readiness-{source}.json').read_text())
             self.assertEqual(readiness['runId'], '42')
+
+    def test_release_retains_previous_objects_and_rechecks_both_pointers(self):
+        self.run_release(retain_previous=True)
+        self.assertEqual(self.writes, [('cos', 'latest-lees-pdf.json'), ('r2', 'latest-lees-pdf.json')])
+        self.assertFalse(self.deleted)
+        for source in ('cos', 'r2'):
+            self.assertEqual(self.reads.count(mirror.base(source) + self.asset['path']), 2)
+            self.assertIn(mirror.base(source) + 'latest-lees-pdf.json', self.reads)
 
     def test_missing_backup_blocks_all_writes_and_cleanup(self):
         self.store.pop(mirror.base('r2') + self.asset['path'])

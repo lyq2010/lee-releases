@@ -239,7 +239,7 @@ class Release:
         prune(self.version, base('cos'))
         self.verify_both(pointers=True)
 
-    def publish(self):
+    def publish(self, *, retain_previous=False):
         self.verify_both()
         for source in SOURCES:
             self.readiness(source)
@@ -249,17 +249,20 @@ class Release:
             local = self.root / f'manifest-{source}.json'
             local.write_bytes(self.metadata(source))
             put(source, 'latest-lees-pdf.json', local, mutable=True)
-        self.cleanup(assets_verified=True)
+        if retain_previous:
+            self.verify_both(pointers=True)
+        else:
+            self.cleanup(assets_verified=True)
 
 
 if __name__ == '__main__':
     mode = sys.argv[1]
-    if mode not in ('stage', 'release', 'cleanup'):
+    if mode not in ('stage', 'release', 'release-retain-previous', 'cleanup'):
         raise RuntimeError('Invalid mirror mode')
     release = Release(Path(sys.argv[2]))
     if mode == 'stage':
         release.stage(env('MIRROR'))
-    elif mode == 'release':
-        release.publish()
+    elif mode in ('release', 'release-retain-previous'):
+        release.publish(retain_previous=mode == 'release-retain-previous')
     else:
         release.cleanup()

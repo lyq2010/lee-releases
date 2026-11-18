@@ -267,7 +267,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/lees-pdf-mirror-tools" --no-audit --no-fund --ignore-scripts wrangler@4.151.0
           echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
-      - name: 核对双源 HEAD 元数据、晋升更新指针并清理后复核
+      - name: 核对双源 HEAD 元数据并更新发行指针
         env:
           RETRY_MIRRORS: ${{ inputs.promote }}
           GH_TOKEN: ${{ github.token }}
@@ -285,7 +285,7 @@ jobs:
             MIRROR=cos python3 release-tools/lees-pdf/mirror.py stage public-output
             MIRROR=r2 python3 release-tools/lees-pdf/mirror.py stage public-output
           fi
-          python3 release-tools/lees-pdf/mirror.py release public-output
+          python3 release-tools/lees-pdf/mirror.py release-retain-previous public-output
       - name: 清除 Draft 装配暂存
         env:
           GH_TOKEN: ${{ github.token }}
