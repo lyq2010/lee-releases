@@ -149,7 +149,7 @@ jobs:
           restore-keys: |
             lees-pdf-native-crates-${{ runner.os }}-${{ runner.arch }}-
       - name: 从已发布包补齐固定 ONNX Runtime 输入
-        if: ${{ inputs.tag == 'v1.0.1' }}
+        if: ${{ inputs.tag == 'v1.0.1' || inputs.tag == 'v1.0.2' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
