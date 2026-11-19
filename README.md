@@ -82,3 +82,5 @@ Lee's Mail for Mac、Lee’s Toolbox Mac 与 Lee’s PDF 使用 ad-hoc 应用签
 通过 [Issues](https://github.com/lyq2010/lee-releases/issues) 报告问题或提出建议，请注明产品名称、应用版本、系统版本、复现步骤和必要日志。
 
 不要在公开位置上传密码、令牌、私人服务器地址或包含个人隐私的原始数据。
+
+发行维护见[通用发版流程](release-tools/README.md)。
