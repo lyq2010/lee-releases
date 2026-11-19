@@ -22,7 +22,7 @@ PHASE_TIMEOUTS = {"preflight": 300, "certificate": 120, "fetch": 900, "tools": 9
 INPUT_TRACE = re.compile(r'^File "[^"]*[/\\](prepare-native-(?:macos|windows|assets|reader)\.py)", line ([0-9]{1,4}),')
 INPUT_ERROR = re.compile(r'^(?:[A-Za-z_]+\.)*(HTTPError|URLError|TimeoutError|SSLError|IncompleteRead|RemoteDisconnected|CalledProcessError|FileNotFoundError|ValueError|BadZipFile|PermissionError|OSError):')
 HTTP_STATUS = re.compile(r'HTTP Error ([45][0-9]{2})\b')
-COMPILER_CODE = re.compile(r"\berror\[(E[0-9]{4})\]|\b(?:fatal )?error (LNK[0-9]{4}|C[0-9]{4}):")
+COMPILER_CODE = re.compile(r"\berror\[(E[0-9]{4})\]|\b(?:fatal )?error (LNK[0-9]{4}|C[0-9]{4}):|\b(STL100[0-2]):")
 CARGO_FAILURE = re.compile(
     r"^error: (?:(failed to run custom build command) for|could not compile) `([a-z0-9_-]+)(?: v[^`]+)?`"
 )
@@ -141,7 +141,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                     if re.fullmatch(r"LEES_BUILD_JOBS:[1-4]", line):
                         compiler_jobs = int(line[-1])
                         report("running")
-                    errors.update(rust or msvc for rust, msvc in COMPILER_CODE.findall(line))
+                    errors.update(rust or msvc or stl for rust, msvc, stl in COMPILER_CODE.findall(line))
                     if phase == "engines" and (failure := CARGO_FAILURE.match(line)):
                         kind = "build-script" if failure[1] else "compile"
                         engine_failures.add(f"{kind}/{ENGINE_COMPONENTS.get(failure[2], 'dependency')}")

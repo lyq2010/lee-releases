@@ -88,16 +88,17 @@ if($IsWindows){
         Write-Output 'LEES_BUILD_PHASE:tools'
         & $python -m pip install cryptography==50.0.2
         if($LASTEXITCODE){throw '签名工具依赖准备失败'}
+        . (Join-Path $PSScriptRoot 'build-tools.ps1')
+        $clang=Get-ReleaseClangDirectory $cache
         Write-Output 'LEES_BUILD_PHASE:nsis'
         $archive=Join-Path $cache 'nsis-3.11.zip'
         Invoke-WebRequest -Uri $tools.nsis.url -OutFile $archive
         if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $tools.nsis.sha256){throw 'NSIS固定来源校验失败'}
         $nsis=Join-Path $cache 'nsis-3.11';Expand-Archive -LiteralPath $archive -DestinationPath $nsis
-        . (Join-Path $PSScriptRoot 'build-tools.ps1')
         $compiler=Get-NsisCompiler $nsis
         Write-Output 'LEES_BUILD_PHASE:clang'
-        $clang=Split-Path (Get-Command clang.exe -ErrorAction Stop).Source -Parent
-        if(!(Test-Path -LiteralPath (Join-Path $clang 'libclang.dll'))){throw 'runner缺少现有LLVM libclang'}
+        '#include <vector>' | & (Join-Path $clang 'clang.exe') --target=x86_64-pc-windows-msvc -x c++ -fsyntax-only -
+        if($LASTEXITCODE){throw '固定 LLVM 无法解析 runner 的 MSVC 标准库'}
         & pwsh -NoProfile -File $entry -OutputRoot $candidate -SignBackup $private -Makensis $compiler -ClangDirectory $clang -ReleaseNotes $notesFile
         if($LASTEXITCODE){throw '原生 Windows 构建/验签失败，私有诊断留在runner'}
     }finally{Pop-Location}

@@ -93,12 +93,13 @@ class LoggedBuildTests(unittest.TestCase):
         code, log, progress = self.invoke(
             'print("LEES_BUILD_PHASE:engines"); '
             'print("private-path : fatal error LNK1104: private-symbol"); '
+            'print("private-path: error: STL1000: private message"); '
             'print("error: failed to run custom build command for `opencv v0.101.1`"); '
             'print("error: could not compile `private-engine`"); raise SystemExit(1)'
         )
         self.assertEqual(code, 1)
         self.assertIn("private-symbol", log)
-        self.assertIn("compilerCodes=LNK1104", progress)
+        self.assertIn("compilerCodes=LNK1104,STL1000", progress)
         self.assertIn("failures=build-script/opencv,compile/dependency", progress)
         self.assertNotIn("private-", progress)
 
