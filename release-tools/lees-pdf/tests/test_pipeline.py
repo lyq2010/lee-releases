@@ -63,8 +63,6 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("actions/cache/save@v5", WORKFLOW)
         self.assertIn("always() && steps.cargo-cache.outputs.cache-hit", WORKFLOW)
         self.assertIn("timeout-minutes: 210", WORKFLOW)
-        self.assertIn("always() && inputs.promote", WORKFLOW)
-        self.assertNotIn("正常构建会直接发布", WORKFLOW)
         self.assertIn("if(!$env:CARGO_HOME)", build)
 
     def test_full_release_workflow_restored(self):
@@ -96,6 +94,16 @@ class WorkflowStaticTests(unittest.TestCase):
         self.assertIn("name: Lee's PDF Release", WORKFLOW)
         self.assertIn("macos-26", WORKFLOW)
         self.assertIn("build-native-macos-release.ps1", BUILD.read_text("utf-8"))
+
+    def test_default_release_promotes_only_after_verified_draft(self):
+        inputs, jobs = WORKFLOW.split("\njobs:\n", 1)
+        self.assertIn("default: publish\n        options: [publish, stage, promote]", inputs)
+        promote = jobs.split("\n  promote:\n", 1)[1]
+        self.assertIn("needs: [validate, draft]", promote)
+        self.assertIn("!cancelled() && needs.validate.result == 'success'", promote)
+        self.assertIn("inputs.mode == 'publish' && needs.draft.result == 'success'", promote)
+        self.assertIn("inputs.mode == 'promote' && needs.draft.result == 'skipped'", promote)
+        self.assertNotIn("inputs.mode == 'stage'", promote)
 
 
 if __name__ == "__main__":

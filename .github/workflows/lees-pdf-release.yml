@@ -11,10 +11,11 @@ on:
         type: choice
         default: all
         options: [all, windows-x86_64, darwin-aarch64]
-      promote:
-        description: 公布已验收 Draft；重新核对并补齐双源后晋升更新指针
-        type: boolean
-        default: false
+      mode:
+        description: publish 构建并发布，stage 仅暂存，promote 手动恢复发布已有草稿
+        type: choice
+        default: publish
+        options: [publish, stage, promote]
 permissions:
   contents: read
 concurrency:
@@ -49,7 +50,7 @@ jobs:
               output.write('matrix='+json.dumps({'include':rows},separators=(',',':'))+'\n')
           PY
   prepare-draft:
-    if: ${{ !inputs.promote }}
+    if: ${{ inputs.mode != 'promote' }}
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -67,7 +68,7 @@ jobs:
             gh release create "$PUBLIC_TAG" --repo lyq2010/lee-releases --target main --draft --latest=false --title "Lee’s PDF $RELEASE_VERSION" --notes "双平台发行资产准备中；尚未公布。"
           fi
   build:
-    if: ${{ !inputs.promote }}
+    if: ${{ inputs.mode != 'promote' }}
     needs: [validate, prepare-draft]
     permissions:
       contents: write
@@ -204,7 +205,7 @@ jobs:
           gh release upload $env:PUBLIC_TAG @assets --repo lyq2010/lee-releases --clobber
           if($LASTEXITCODE){throw 'Draft 上传失败'}
   draft:
-    if: ${{ !inputs.promote }}
+    if: ${{ inputs.mode != 'promote' }}
     needs: [validate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -247,7 +248,10 @@ jobs:
           R2_BUCKET: packing-list-releases
         run: python3 release-tools/lees-pdf/stage_mirrors.py public-output
   promote:
-    if: ${{ always() && inputs.promote && needs.validate.result == 'success' && needs.draft.result == 'skipped' }}
+    if: >-
+      ${{ !cancelled() && needs.validate.result == 'success' &&
+          ((inputs.mode == 'publish' && needs.draft.result == 'success') ||
+           (inputs.mode == 'promote' && needs.draft.result == 'skipped')) }}
     needs: [validate, draft]
     runs-on: ubuntu-latest
     environment: lees-pdf-release
@@ -269,7 +273,7 @@ jobs:
           echo "LEESPDF_WRANGLER_CLI=$RUNNER_TEMP/lees-pdf-mirror-tools/node_modules/wrangler/bin/wrangler.js" >> "$GITHUB_ENV"
       - name: 核对双源 HEAD 元数据并更新发行指针
         env:
-          RETRY_MIRRORS: ${{ inputs.promote }}
+          RETRY_MIRRORS: ${{ inputs.mode == 'promote' }}
           GH_TOKEN: ${{ github.token }}
           PUBLIC_TAG: ${{ needs.validate.outputs.tag }}
           COS_PUBLIC_BASE_URL: ${{ secrets.COS_PUBLIC_BASE_URL }}
