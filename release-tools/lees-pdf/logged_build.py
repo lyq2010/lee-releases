@@ -22,6 +22,11 @@ PHASE_TIMEOUTS = {"preflight": 300, "certificate": 120, "fetch": 900, "tools": 9
 INPUT_TRACE = re.compile(r'^File "[^"]*[/\\](prepare-native-(?:macos|windows|assets|reader)\.py)", line ([0-9]{1,4}),')
 INPUT_ERROR = re.compile(r'^(?:[A-Za-z_]+\.)*(HTTPError|URLError|TimeoutError|SSLError|IncompleteRead|RemoteDisconnected|CalledProcessError|FileNotFoundError|ValueError|BadZipFile|PermissionError|OSError):')
 HTTP_STATUS = re.compile(r'HTTP Error ([45][0-9]{2})\b')
+COMPILER_CODE = re.compile(r"\berror\[(E[0-9]{4})\]|\b(?:fatal )?error (LNK[0-9]{4}|C[0-9]{4}):")
+CARGO_FAILURE = re.compile(
+    r"^error: (?:(failed to run custom build command) for|could not compile) `([a-z0-9_-]+)(?: v[^`]+)?`"
+)
+ENGINE_COMPONENTS = {"lees-ocr-engine": "ocr", "lees-scan-engine": "scan", "opencv": "opencv", "ort-sys": "onnx"}
 
 
 def stop(process):
@@ -40,6 +45,7 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
     started = activity = last_report = phase_started = time.monotonic()
     size = units = 0
     errors = set()
+    engine_failures = set()
     orchestrator_line = 0
     input_trace, input_errors, http_codes = set(), set(), set()
     compiler_jobs = 0
@@ -135,7 +141,10 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                     if re.fullmatch(r"LEES_BUILD_JOBS:[1-4]", line):
                         compiler_jobs = int(line[-1])
                         report("running")
-                    errors.update(re.findall(r"\berror\[(E[0-9]{4})\]", line))
+                    errors.update(rust or msvc for rust, msvc in COMPILER_CODE.findall(line))
+                    if phase == "engines" and (failure := CARGO_FAILURE.match(line)):
+                        kind = "build-script" if failure[1] else "compile"
+                        engine_failures.add(f"{kind}/{ENGINE_COMPONENTS.get(failure[2], 'dependency')}")
                     location = re.search(r"/release-tools/lees-pdf/build\.ps1:([0-9]+)", line.replace("\\", "/"))
                     if location:
                         orchestrator_line = int(location[1])
@@ -159,6 +168,8 @@ def run(command, log, phase, timeout=10800, quiet_timeout=2700, interval=30):
                                      "lees-scan-engine":"scan"}.get(name, "dependencies")
             code = process.wait(timeout=max(1, timeout - (time.monotonic() - started)))
             report("success" if code == 0 else f"failed-{code}")
+            if code != 0 and engine_failures:
+                print(f"native-engine-diagnostics failures={','.join(sorted(engine_failures))}", flush=True)
             if code != 0 and phase == "inputs":
                 print("native-input-diagnostics "
                       f"trace={','.join(sorted(input_trace)) or 'none'} "
