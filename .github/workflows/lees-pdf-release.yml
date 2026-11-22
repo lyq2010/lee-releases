@@ -120,6 +120,12 @@ jobs:
           $null=New-Item -ItemType Junction -Path private-source/.tools -Target I:/DevCache/tools
           "CARGO_HOME=I:/DevCache/cargo" >> $env:GITHUB_ENV
           "RELEASE_VERSION=$($env:SOURCE_TAG.Substring(1))" >> $env:GITHUB_ENV
+          rustup toolchain install stable --profile minimal --no-self-update
+          if($LASTEXITCODE){throw '最新 Rust stable 工具链准备失败'}
+          rustup default stable
+          if($LASTEXITCODE){throw '切换 Rust stable 工具链失败'}
+          rustc --version
+          cargo --version
       - name: 配置 macOS 原生构建环境
         if: ${{ matrix.target == 'darwin-aarch64' }}
         shell: bash
@@ -137,10 +143,12 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           fi
+          rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
           rustup target add aarch64-apple-darwin
           brew list cmake >/dev/null 2>&1 || brew install cmake
           cmake --version
+          rustc --version
           cargo --version
       - uses: actions/cache/restore@v5
         id: cargo-cache
