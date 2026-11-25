@@ -51,7 +51,7 @@ jobs:
       if: steps.existing.outputs.published != 'true'
       with:
         distribution: temurin
-        java-version: '17'
+        java-version: '25'
     - uses: android-actions/setup-android@v4
       if: steps.existing.outputs.published != 'true'
     - name: Install Android SDK
